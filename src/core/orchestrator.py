@@ -568,8 +568,10 @@ class Orchestrator:
 
         return FileGroupResult(file_path=file_path, verdicts=verdicts, contexts=contexts)
 
-    # Max findings per LLM call — larger groups are split into batches
-    _MAX_FINDINGS_PER_BATCH = 3
+    # Per-finding analysis: each finding gets its own LLM call with focused context.
+    # Industry research (Snyk CodeReduce, Semgrep Assistant, LLM4FPM) shows
+    # accuracy improves with less, more targeted context per finding.
+    # Findings at the same line with the same rule are batched together.
 
     @traceable(name="llm_file_group_analysis", run_type="chain")
     async def _analyze_file_group(
@@ -581,28 +583,32 @@ class Orchestrator:
         llm: Optional[BaseChatModel] = None,
         profile: Optional[RepoProfile] = None,
     ) -> list[FindingVerdict]:
-        """Send grouped prompt to LLM with semaphore gating, retries, and batching."""
+        """Analyze findings per-finding (or per-group for same-line/same-rule duplicates)."""
         llm = llm or self._llm
 
-        if len(findings) <= self._MAX_FINDINGS_PER_BATCH:
-            return await self._analyze_batch(
-                findings, contexts, repo_map, repo_url, llm, profile,
-                index_offset=0,
-            )
+        # Group findings that share the same line AND same rule (true duplicates).
+        # Everything else gets its own LLM call.
+        batches: list[tuple[list[SemgrepFinding], dict[int, FindingContext], int]] = []
+        i = 0
+        while i < len(findings):
+            # Collect findings at the same line with the same check_id
+            group = [findings[i]]
+            group_contexts = {0: contexts[i]} if i in contexts else {}
+            j = i + 1
+            while j < len(findings) and findings[j].start_line == findings[i].start_line and findings[j].check_id == findings[i].check_id:
+                idx_in_group = j - i
+                group.append(findings[j])
+                if j in contexts:
+                    group_contexts[idx_in_group] = contexts[j]
+                j += 1
+            batches.append((group, group_contexts, i))
+            i = j
 
-        # Split into batches for large file groups
         verdicts: list[FindingVerdict] = []
-        for batch_start in range(0, len(findings), self._MAX_FINDINGS_PER_BATCH):
-            batch_end = min(batch_start + self._MAX_FINDINGS_PER_BATCH, len(findings))
-            batch_findings = findings[batch_start:batch_end]
-            batch_contexts = {
-                i - batch_start: contexts[i]
-                for i in range(batch_start, batch_end)
-                if i in contexts
-            }
+        for batch_findings, batch_contexts, offset in batches:
             batch_verdicts = await self._analyze_batch(
                 batch_findings, batch_contexts, repo_map, repo_url, llm, profile,
-                index_offset=batch_start,
+                index_offset=offset,
             )
             verdicts.extend(batch_verdicts)
 
