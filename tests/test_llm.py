@@ -1,68 +1,10 @@
 """Tests for LLM client components."""
 
 import pytest
-from src.llm.json_extractor import extract_json_array
 from src.llm.prompt_builder import SYSTEM_PROMPT, build_grouped_prompt
 from src.core.triage_memory import TriageMemory
 from src.llm.provider import create_chat_model
 from src.models.analysis import FindingContext
-
-
-# --- JSON Extractor tests ---
-
-def test_extract_clean_json():
-    raw = '[{"finding_index": 1, "is_false_positive": true, "confidence": 0.9, "reasoning": "safe"}]'
-    result = extract_json_array(raw)
-    assert len(result) == 1
-    assert result[0]["is_false_positive"] is True
-
-
-def test_extract_json_from_markdown_fence():
-    raw = '```json\n[{"finding_index": 1, "is_false_positive": false, "confidence": 0.8, "reasoning": "vuln"}]\n```'
-    result = extract_json_array(raw)
-    assert len(result) == 1
-
-
-def test_extract_json_with_think_tags():
-    raw = '<think>Let me analyze...</think>\n[{"finding_index": 1, "is_false_positive": true, "confidence": 0.7, "reasoning": "ok"}]'
-    result = extract_json_array(raw)
-    assert len(result) == 1
-
-
-def test_extract_json_with_surrounding_text():
-    raw = 'Here is my analysis:\n[{"finding_index": 1, "is_false_positive": true, "confidence": 0.85, "reasoning": "sanitized"}]\nHope this helps!'
-    result = extract_json_array(raw)
-    assert len(result) == 1
-
-
-def test_extract_json_returns_empty_on_garbage():
-    result = extract_json_array("This is not JSON at all")
-    assert result == []
-
-
-def test_extract_json_repairs_truncated_array():
-    """Truncated JSON from reasoning model output budget exhaustion."""
-    raw = '[{"finding_index": 1, "verdict": "true_positive", "confidence": 0.9, "reasoning": "vuln"}, {"finding_index": 2, "verdict": "false_positive", "confidence": 0.8, "reasoning": "sa'
-    result = extract_json_array(raw)
-    # Should recover at least the first complete item
-    assert len(result) >= 1
-    assert result[0]["finding_index"] == 1
-
-
-def test_extract_json_repairs_truncated_in_markdown():
-    """Truncated JSON inside markdown fences."""
-    raw = '```json\n[{"finding_index": 1, "verdict": "true_positive", "confidence": 0.9, "reasoning": "real vuln"}, {"finding_in'
-    result = extract_json_array(raw)
-    assert len(result) >= 1
-    assert result[0]["verdict"] == "true_positive"
-
-
-def test_extract_json_repairs_truncated_after_comma():
-    """Truncation right after a comma between objects."""
-    raw = '[{"finding_index": 1, "verdict": "true_positive", "confidence": 0.9, "reasoning": "vuln"},'
-    result = extract_json_array(raw)
-    assert len(result) >= 1
-    assert result[0]["finding_index"] == 1
 
 
 # --- Prompt Builder tests ---

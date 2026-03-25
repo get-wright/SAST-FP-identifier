@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 
 from src.api.models import AnalyzeRequest, AnalyzeResponse
 from src.core.orchestrator import Orchestrator
-from src.llm.provider import create_provider
+from src.llm.provider import create_chat_model
 from src.reports.annotated_json import build_annotated_json
 from src.reports.markdown_summary import build_markdown_summary
 
@@ -31,7 +31,7 @@ def _build_llm_override(request: AnalyzeRequest):
     if not ovr:
         return None, None
     model = ovr.model or _DEFAULT_MODELS.get(ovr.provider, "")
-    provider = create_provider(
+    provider = create_chat_model(
         ovr.provider, ovr.api_key, model, ovr.base_url,
         is_reasoning_model=ovr.is_reasoning_model,
     )

@@ -1,11 +1,12 @@
 """Smoke test — full pipeline with mocked LLM and gkg."""
 
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from httpx import AsyncClient, ASGITransport
 from src.api.app import create_app
 from src.api.routes import set_orchestrator
 from src.core.orchestrator import Orchestrator
+from src.llm.schemas import VerdictOutput, VerdictOutputBatch
 
 
 SEMGREP_JSON = {
@@ -48,13 +49,23 @@ async def test_full_pipeline_mocked(tmp_path):
     )
     set_orchestrator(orch)
 
-    llm_response = '[{"finding_index": 1, "reasoning": "exec with user input is dangerous", "verdict": "true_positive", "confidence": 0.91, "remediation_code": null, "remediation_explanation": null}]'
+    mock_structured = AsyncMock()
+    mock_structured.ainvoke.return_value = VerdictOutputBatch(verdicts=[
+        VerdictOutput(
+            finding_index=1,
+            reasoning="exec with user input is dangerous",
+            verdict="true_positive",
+            confidence=0.91,
+        ),
+    ])
+    mock_llm = MagicMock()
+    mock_llm.with_structured_output.return_value = mock_structured
 
     with patch.object(orch._repo, "clone", return_value=str(tmp_path)), \
          patch.object(orch._repo, "get_head_sha", return_value="abc123def456"), \
          patch.object(orch._repo, "validate_url"), \
-         patch.object(orch._graph, "is_available", return_value=False), \
-         patch.object(orch._llm, "complete", new_callable=AsyncMock, return_value=llm_response):
+         patch.object(orch._graph, "is_available", return_value=False):
+        orch._llm = mock_llm
 
         # Create a fake file for tree-sitter to parse
         fake_file = tmp_path / "app.py"

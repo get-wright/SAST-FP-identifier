@@ -16,9 +16,10 @@ from src.core.enricher import Enricher
 from src.core.triage_memory import TriageMemoryStore
 from src.graph.joern_manager import JoernManager
 from src.graph.manager import GraphManager
-from src.llm.json_extractor import extract_json_array
 from src.llm.prompt_builder import SYSTEM_PROMPT, build_grouped_prompt
-from src.llm.provider import LLMProvider, create_provider
+from src.llm.provider import create_chat_model
+from src.llm.schemas import VerdictOutputBatch
+from langchain_core.language_models import BaseChatModel
 from src.models.analysis import AnalysisResult, CallerInfo, FileGroupResult, FindingContext, FindingVerdict, TaintFlow
 from src.models.semgrep import SemgrepFinding, parse_semgrep_json
 from src.repo.handler import RepoHandler
@@ -224,14 +225,17 @@ class Orchestrator:
         self._sbom_enabled = sbom_enabled
         self._sbom_tool = sbom_tool
         self._sbom_timeout = sbom_timeout
-        self._llm = create_provider(llm_provider, llm_api_key, llm_model, llm_base_url, is_reasoning_model=is_reasoning_model)
+        self._llm: BaseChatModel = create_chat_model(
+            llm_provider, llm_api_key, llm_model, llm_base_url,
+            is_reasoning_model=is_reasoning_model,
+            temperature=llm_temperature,
+            max_tokens=llm_max_tokens,
+        )
         self._llm_provider_name = llm_provider
         self._is_reasoning_model = is_reasoning_model
         self._cache = ResultCache(cache_dir, cache_ttl_hours, cache_enabled)
         self._triage_memory = TriageMemoryStore(triage_data_dir)
         self._semaphore = asyncio.Semaphore(llm_max_concurrent)
-        self._temperature = llm_temperature
-        self._max_tokens = llm_max_tokens
         self._retry_count = llm_retry_count
         self._fp_threshold = fp_threshold
         self._max_findings = max_findings
@@ -260,7 +264,7 @@ class Orchestrator:
         semgrep_json: dict[str, Any],
         commit_sha: Optional[str] = None,
         git_token: Optional[str] = None,
-        llm_override: Optional[LLMProvider] = None,
+        llm_override: Optional[BaseChatModel] = None,
         on_step: Optional[Callable[[dict], Awaitable[None]]] = None,
     ) -> AnalysisResult:
         """Run the full analysis pipeline.
@@ -416,7 +420,7 @@ class Orchestrator:
         repo_map: str,
         commit_sha: str,
         repo_url: str,
-        llm: Optional[LLMProvider] = None,
+        llm: Optional[BaseChatModel] = None,
         profile: Optional[RepoProfile] = None,
     ) -> FileGroupResult:
         """Enrich + analyze one file-group."""
@@ -566,7 +570,7 @@ class Orchestrator:
         contexts: dict[int, FindingContext],
         repo_map: str,
         repo_url: str,
-        llm: Optional[LLMProvider] = None,
+        llm: Optional[BaseChatModel] = None,
         profile: Optional[RepoProfile] = None,
     ) -> list[FindingVerdict]:
         """Send grouped prompt to LLM with semaphore gating, retries, and batching."""
@@ -602,7 +606,7 @@ class Orchestrator:
         contexts: dict[int, FindingContext],
         repo_map: str,
         repo_url: str,
-        llm: LLMProvider,
+        llm: BaseChatModel,
         profile: Optional[RepoProfile],
         index_offset: int = 0,
     ) -> list[FindingVerdict]:
@@ -638,13 +642,14 @@ class Orchestrator:
             profile=profile,
         )
 
+        structured = llm.with_structured_output(VerdictOutputBatch)
+        messages = [("system", SYSTEM_PROMPT), ("human", prompt)]
+
         async with self._semaphore:
-            raw = ""
+            batch_result = None
             for attempt in range(1 + self._retry_count):
                 try:
-                    raw = await llm.complete(
-                        SYSTEM_PROMPT, prompt, self._temperature, self._max_tokens
-                    )
+                    batch_result = await structured.ainvoke(messages)
                     break
                 except Exception as e:
                     if attempt < self._retry_count:
@@ -652,7 +657,10 @@ class Orchestrator:
                     else:
                         logger.error("LLM failed after %d retries: %s", self._retry_count, e)
 
-        parsed = extract_json_array(raw)
+        if batch_result is None:
+            parsed = []
+        else:
+            parsed = [v.model_dump() for v in batch_result.verdicts]
 
         # Map results back to findings (handle both 0-indexed and 1-indexed from LLM)
         verdicts = []
