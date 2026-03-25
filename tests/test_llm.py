@@ -353,3 +353,30 @@ def test_prompt_taint_flow_with_sanitizer():
 
     assert "SANITIZER" in prompt.upper()
     assert "escape" in prompt
+
+
+def test_verdict_output_schema():
+    from src.llm.schemas import VerdictOutput, VerdictOutputBatch
+    v = VerdictOutput(
+        finding_index=1,
+        reasoning="SOURCE: x | SANITIZATION: none | SINK: y | EXPLOITABILITY: z",
+        verdict="false_positive",
+        confidence=0.9,
+    )
+    assert v.verdict == "false_positive"
+    batch = VerdictOutputBatch(verdicts=[v])
+    assert len(batch.verdicts) == 1
+
+
+def test_verdict_output_schema_validates_verdict():
+    from src.llm.schemas import VerdictOutput
+    import pytest
+    with pytest.raises(Exception):
+        VerdictOutput(finding_index=1, reasoning="x", verdict="bad", confidence=0.5)
+
+
+def test_verdict_output_schema_clamps_confidence():
+    from src.llm.schemas import VerdictOutput
+    import pytest
+    with pytest.raises(Exception):
+        VerdictOutput(finding_index=1, reasoning="x", verdict="uncertain", confidence=1.5)
