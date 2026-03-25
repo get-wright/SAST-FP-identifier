@@ -347,3 +347,50 @@ async def test_process_file_group_does_not_use_stale_cache_when_override_changes
     verdict = result.verdicts[0]
     assert verdict.verdict == "false_positive"
     assert verdict.override_id == "override-2"
+
+
+def test_taint_flow_boosts_evidence_score():
+    from src.core.orchestrator import _base_evidence
+    from src.models.analysis import FindingContext, FlowStep, TaintFlow
+
+    flow = TaintFlow(
+        path=[
+            FlowStep(variable="x", line=1, expression="param", kind="parameter"),
+            FlowStep(variable="x", line=2, expression="eval(x)", kind="sink"),
+        ],
+        sanitizers=[],
+        unresolved_calls=[],
+        cross_file_hops=[],
+        confidence_factors=["Direct source to sink with no sanitizer"],
+        inferred=None,
+    )
+    ctx = FindingContext(
+        code_snippet="eval(x)", enclosing_function="f", function_body="def f(x): eval(x)",
+        taint_flow=flow,
+    )
+    score = _base_evidence(ctx, "app.py")
+    assert score >= 0.80
+
+
+def test_taint_flow_sanitizer_lowers_evidence():
+    from src.core.orchestrator import _base_evidence
+    from src.models.analysis import FindingContext, FlowStep, SanitizerInfo, TaintFlow
+
+    flow = TaintFlow(
+        path=[
+            FlowStep(variable="x", line=1, expression="param", kind="parameter"),
+            FlowStep(variable="x", line=2, expression="safe = escape(x)", kind="call_result"),
+            FlowStep(variable="safe", line=3, expression="output(safe)", kind="sink"),
+        ],
+        sanitizers=[SanitizerInfo(name="escape", line=2, cwe_categories=["CWE-79"], conditional=False, verified=True)],
+        unresolved_calls=[],
+        cross_file_hops=[],
+        confidence_factors=[],
+        inferred=None,
+    )
+    ctx = FindingContext(
+        code_snippet="output(safe)", enclosing_function="f", function_body="...",
+        taint_flow=flow,
+    )
+    score = _base_evidence(ctx, "app.py")
+    assert score <= 0.70

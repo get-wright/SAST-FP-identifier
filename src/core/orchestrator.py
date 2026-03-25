@@ -57,6 +57,32 @@ def _base_evidence(ctx, file_path: str) -> float:
     """Evidence weight based on enrichment source quality."""
     if not ctx:
         return 0.60
+
+    # TaintFlow adjustments (tree-sitter taint tracing)
+    if ctx.taint_flow is not None:
+        flow = ctx.taint_flow
+        base = 0.80  # elevated base when flow is present
+
+        if flow.path and len(flow.path) >= 2 and not flow.sanitizers:
+            base += 0.15  # strong TP signal: source->sink, no sanitizer
+
+        if flow.sanitizers:
+            unconditional = [s for s in flow.sanitizers if not s.conditional and s.verified]
+            conditional_only = [s for s in flow.sanitizers if s.conditional]
+            if unconditional:
+                base -= 0.20  # strong FP signal
+            elif conditional_only:
+                base += 0.05  # weak signal
+
+        if flow.path and len(flow.path) == 1:
+            base -= 0.10  # only sink, no traced source
+
+        if flow.cross_file_hops:
+            if any(h.action == "sanitizes" for h in flow.cross_file_hops):
+                base -= 0.15
+
+        return max(0.0, min(base, 1.0))
+
     if ctx.source in ("joern",):
         return 1.0
     if ctx.source == "gkg":
