@@ -73,10 +73,15 @@ async def resolve_cross_file(
         if not file_path:
             return CrossFileResult(action="unknown")
 
+        # Use last line of function as sink_line (approximate — traces return statements)
+        # The definition line is the function start; we need the end to find returns.
+        end_line = defn.get("end_line", defn.get("line_end", 0))
+        effective_sink = end_line if end_line > line else line + 20  # estimate if no end_line
+
         sub_flow = trace_taint_flow(
             file_path=file_path,
             function_name=callee_name,
-            sink_line=line,
+            sink_line=effective_sink,
             check_id="",
             cwe_list=[],
         )

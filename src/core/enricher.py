@@ -78,8 +78,14 @@ class Enricher:
 
             # Cross-file resolution for unresolved callees (when gkg available)
             if taint_flow and taint_flow.unresolved_calls and self._gkg_available and self._gkg:
+                import time as _time
                 hops = []
+                _cross_file_start = _time.monotonic()
+                _CROSS_FILE_BUDGET = 15.0
                 for callee in taint_flow.unresolved_calls[:3]:
+                    if _time.monotonic() - _cross_file_start > _CROSS_FILE_BUDGET:
+                        logger.info("Cross-file resolution budget exhausted (%.0fs)", _CROSS_FILE_BUDGET)
+                        break
                     try:
                         result = await resolve_cross_file(
                             callee_name=callee,

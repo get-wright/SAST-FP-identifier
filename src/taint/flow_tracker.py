@@ -15,6 +15,7 @@ from tree_sitter import Node
 from src.code_reader.tree_sitter_reader import TreeSitterReader, LanguageConfig
 from src.models.analysis import FlowStep, SanitizerInfo, TaintFlow
 from src.taint.sanitizer_checker import check_known_sanitizer, is_conditional_ancestor
+from src.taint.sink_source_inference import infer_sink_source
 
 logger = logging.getLogger(__name__)
 
@@ -71,12 +72,11 @@ def trace_taint_flow(
         )
         path.append(sink_step)
 
-        # Filter sanitizers to only those in the taint path
+        # Filter sanitizers to only those applied to variables in the taint path
         path_vars = {step.variable for step in path}
         relevant_sanitizers = [
             s for s in used_sanitizers
-            if s.name in _sanitizer_target_vars(sanitizers, s.name) & path_vars
-            or True  # keep all sanitizers found during trace
+            if _sanitizer_target_vars(sanitizers, s.name) & path_vars
         ]
 
         # Deduplicate sanitizers by name
@@ -88,26 +88,29 @@ def trace_taint_flow(
                 deduped.append(s)
 
         confidence_factors: list[str] = []
-        # Check if source is a parameter or dangerous source
         source_step = path[0]
-        if source_step.kind == "parameter" and source_step.variable not in _param_names_from_dangerous(config):
-            # Check if any dangerous source pattern matches
-            has_dangerous = any(
-                ds in deps.get(source_step.variable, {}).get("expr", "")
-                for ds in config.dangerous_sources
-            )
-            if not has_dangerous and source_step.variable not in params:
-                confidence_factors.append("No external source detected")
+        if deduped:
+            unconditional = [s for s in deduped if not s.conditional]
+            if unconditional:
+                confidence_factors.append(f"Sanitizer {unconditional[0].name} found in path")
+            else:
+                confidence_factors.append("Conditional sanitizer only — may not always execute")
+        elif source_step.kind in ("parameter", "source"):
+            confidence_factors.append("Direct source to sink with no sanitizer")
+
+        inferred = infer_sink_source(check_id, cwe_list, _get_line_text(file_path, sink_line))
 
         return TaintFlow(
             path=path,
             sanitizers=deduped,
             unresolved_calls=unresolved,
             confidence_factors=confidence_factors,
+            inferred=inferred,
         )
 
     # No taint path found — might be hardcoded
     confidence_factors = ["No external source — values appear hardcoded"]
+    inferred = infer_sink_source(check_id, cwe_list, _get_line_text(file_path, sink_line))
     return TaintFlow(
         path=[FlowStep(
             variable=sink_vars[0],
@@ -118,6 +121,7 @@ def trace_taint_flow(
         sanitizers=[],
         unresolved_calls=unresolved,
         confidence_factors=confidence_factors,
+        inferred=inferred,
     )
 
 
