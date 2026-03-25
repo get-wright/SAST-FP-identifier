@@ -283,3 +283,73 @@ async def test_finish_reason_length_logs_warning(monkeypatch, caplog):
 
     assert "truncated" in caplog.text.lower()
     assert "finish_reason=length" in caplog.text
+
+
+def test_prompt_includes_taint_flow():
+    from src.llm.prompt_builder import build_grouped_prompt
+    from src.models.analysis import FindingContext, FlowStep, TaintFlow
+
+    flow = TaintFlow(
+        path=[
+            FlowStep(variable="user_input", line=5, expression="user_input = request.args.get('q')", kind="source"),
+            FlowStep(variable="query", line=8, expression="query = f'SELECT ... {user_input}'", kind="assignment"),
+            FlowStep(variable="query", line=9, expression="cursor.execute(query)", kind="sink"),
+        ],
+        sanitizers=[],
+        unresolved_calls=[],
+        cross_file_hops=[],
+        confidence_factors=["Direct source to sink with no sanitizer"],
+        inferred=None,
+    )
+
+    ctx = FindingContext(
+        code_snippet="9 | cursor.execute(query)",
+        enclosing_function="handle",
+        function_body="def handle(user_input):\n    query = ...\n    cursor.execute(query)",
+        taint_flow=flow,
+    )
+
+    prompt = build_grouped_prompt(
+        file_path="app.py",
+        findings=[{"index": 0, "rule": "sqli", "line": 9, "message": "SQL injection"}],
+        contexts={0: ctx},
+    )
+
+    assert "TRACED DATA FLOW" in prompt
+    assert "user_input" in prompt
+    assert "SOURCE" in prompt
+    assert "SINK" in prompt
+
+
+def test_prompt_taint_flow_with_sanitizer():
+    from src.llm.prompt_builder import build_grouped_prompt
+    from src.models.analysis import FindingContext, FlowStep, SanitizerInfo, TaintFlow
+
+    flow = TaintFlow(
+        path=[
+            FlowStep(variable="user_input", line=5, expression="param", kind="parameter"),
+            FlowStep(variable="safe", line=6, expression="safe = escape(user_input)", kind="call_result"),
+            FlowStep(variable="safe", line=7, expression="output(safe)", kind="sink"),
+        ],
+        sanitizers=[SanitizerInfo(name="escape", line=6, cwe_categories=["CWE-79"], conditional=False, verified=False)],
+        unresolved_calls=[],
+        cross_file_hops=[],
+        confidence_factors=[],
+        inferred=None,
+    )
+
+    ctx = FindingContext(
+        code_snippet="7 | output(safe)",
+        enclosing_function="render",
+        function_body="...",
+        taint_flow=flow,
+    )
+
+    prompt = build_grouped_prompt(
+        file_path="app.py",
+        findings=[{"index": 0, "rule": "xss", "line": 7, "message": "XSS"}],
+        contexts={0: ctx},
+    )
+
+    assert "SANITIZER" in prompt.upper()
+    assert "escape" in prompt

@@ -39,6 +39,68 @@ CONFIDENCE: How certain you are in your verdict (0.0 = guessing, 1.0 = certain).
 CHARS_PER_TOKEN = 4
 
 
+def _render_taint_flow(flow) -> str:
+    """Render a TaintFlow into structured prompt text."""
+    if not flow or not flow.path:
+        if flow and flow.inferred:
+            return (
+                f"INFERRED SINK TYPE: {flow.inferred.sink_type} "
+                f"(via {flow.inferred.inferred_from})\n"
+                f"Expected sources: {', '.join(flow.inferred.expected_sources)}\n"
+            )
+        return ""
+
+    FLOW_CHAR_BUDGET = 6000
+    lines = []
+    path = flow.path
+
+    if len(path) > 15:
+        shown = path[:5] + path[-5:]
+        omitted = len(path) - 10
+    else:
+        shown = path
+        omitted = 0
+
+    hop_count = len(flow.cross_file_hops)
+    header = "TRACED DATA FLOW"
+    if hop_count:
+        header += f" (cross-file, {hop_count} hops)"
+    header += f" ({len(path)} steps):"
+    lines.append(header)
+
+    for i, step in enumerate(shown):
+        if omitted and i == 5:
+            lines.append(f"  [... {omitted} intermediate steps ...]")
+        tag = step.kind.upper()
+        if tag == "PARAMETER":
+            tag = "SOURCE"
+        lines.append(f"  [{tag}] line {step.line}: {step.expression[:80]}")
+
+    for hop in flow.cross_file_hops:
+        lines.append(f"  -> [HOP] {hop.file}:{hop.line} {hop.callee}() -> {hop.action}")
+
+    if flow.sanitizers:
+        san_strs = []
+        for s in flow.sanitizers:
+            cond = " (CONDITIONAL)" if s.conditional else ""
+            verified = " [verified]" if s.verified else ""
+            san_strs.append(f"{s.name} at line {s.line} ({', '.join(s.cwe_categories)}){cond}{verified}")
+        lines.append("SANITIZERS IN PATH: " + "; ".join(san_strs))
+    else:
+        lines.append("SANITIZERS IN PATH: NONE")
+
+    if flow.unresolved_calls:
+        lines.append(f"UNRESOLVED CALLS: {', '.join(flow.unresolved_calls)}")
+
+    if flow.confidence_factors:
+        lines.append(f"FLOW EVIDENCE: {'; '.join(flow.confidence_factors)}")
+
+    result = "\n".join(lines)
+    if len(result) > FLOW_CHAR_BUDGET:
+        result = result[:FLOW_CHAR_BUDGET] + "\n  [... taint flow truncated due to length]"
+    return result
+
+
 def build_grouped_prompt(
     file_path: str,
     findings: list[dict],
@@ -135,6 +197,12 @@ def build_grouped_prompt(
 
         fnum = idx + 1
         lines = [f"--- Finding {fnum} context ---"]
+
+        # Taint flow (primary evidence when available)
+        if ctx.taint_flow:
+            flow_text = _render_taint_flow(ctx.taint_flow)
+            if flow_text:
+                lines.append(flow_text)
 
         if ctx.source == "joern" and ctx.taint_reachable is not None:
             # Strategy 1: Taint-path-first — compact, structured context
