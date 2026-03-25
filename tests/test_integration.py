@@ -78,3 +78,46 @@ async def test_full_pipeline_mocked(tmp_path):
     results = data["annotated_json"]["results"]
     assert len(results) == 1
     assert "x_fp_analysis" in results[0]["extra"]
+
+
+async def test_taint_flow_enrichment_e2e(tmp_path):
+    """End-to-end: Semgrep finding → enrichment → taint flow → prompt includes flow."""
+    vuln = tmp_path / "app.py"
+    vuln.write_text(
+        "def search(request):\n"
+        "    query = request.args.get('q')\n"
+        "    sql = f\"SELECT * FROM users WHERE name = '{query}'\"\n"
+        "    cursor.execute(sql)\n"
+    )
+
+    from src.core.enricher import Enricher
+    from src.models.semgrep import SemgrepFinding
+    from src.llm.prompt_builder import build_grouped_prompt
+
+    finding = SemgrepFinding.model_validate({
+        "check_id": "python.lang.security.audit.sqli",
+        "path": "app.py",
+        "start": {"line": 4, "col": 4},
+        "end": {"line": 4, "col": 25},
+        "extra": {
+            "message": "SQL injection",
+            "severity": "WARNING",
+            "fingerprint": "e2e123",
+            "metadata": {"cwe": ["CWE-89: SQL Injection"]},
+            "lines": "cursor.execute(sql)",
+            "is_ignored": False,
+        },
+    })
+
+    enricher = Enricher(repo_path=str(tmp_path))
+    ctx = await enricher.enrich(finding)
+
+    assert ctx.taint_flow is not None
+    assert len(ctx.taint_flow.path) >= 2
+
+    prompt = build_grouped_prompt(
+        file_path="app.py",
+        findings=[{"index": 0, "rule": "sqli", "line": 4, "message": "SQL injection"}],
+        contexts={0: ctx},
+    )
+    assert "TRACED DATA FLOW" in prompt
