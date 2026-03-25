@@ -10,8 +10,10 @@ from typing import Optional
 from src.code_reader.tree_sitter_reader import TreeSitterReader
 from src.graph.joern_client import CallGraphResult, JoernClient, TaintResult
 from src.graph.mcp_client import GkgMCPClient
-from src.models.analysis import FindingContext, CallerInfo
+from src.models.analysis import CrossFileHop, FindingContext, CallerInfo
 from src.models.semgrep import SemgrepFinding
+from src.taint.flow_tracker import trace_taint_flow
+from src.taint.cross_file import resolve_cross_file
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,40 @@ class Enricher:
             ctx = await self._enrich_with_gkg(file_path, finding, snippet)
         else:
             ctx = self._enrich_with_tree_sitter(file_path, finding, snippet)
+
+        # Tree-sitter taint flow tracing (always runs for supported languages)
+        try:
+            taint_flow = trace_taint_flow(
+                file_path=file_path,
+                function_name=ctx.enclosing_function or "",
+                sink_line=line,
+                check_id=finding.check_id,
+                cwe_list=finding.metadata.get("cwe", []),
+            )
+            ctx.taint_flow = taint_flow
+
+            # Cross-file resolution for unresolved callees (when gkg available)
+            if taint_flow and taint_flow.unresolved_calls and self._gkg_available and self._gkg:
+                hops = []
+                for callee in taint_flow.unresolved_calls[:3]:
+                    try:
+                        result = await resolve_cross_file(
+                            callee_name=callee,
+                            gkg_client=self._gkg,
+                            repo_path=self._repo_path,
+                        )
+                        hops.append(CrossFileHop(
+                            callee=callee,
+                            file=result.file,
+                            line=result.line,
+                            action=result.action,
+                            sub_flow=result.sub_flow,
+                        ))
+                    except Exception as e:
+                        logger.warning("Cross-file resolution failed for %s: %s", callee, e)
+                taint_flow.cross_file_hops = hops
+        except Exception as e:
+            logger.warning("Taint flow tracing failed for %s:%d: %s", finding.path, line, e)
 
         # Joern taint analysis (adds taint fields to existing context)
         ext = Path(file_path).suffix.lower()

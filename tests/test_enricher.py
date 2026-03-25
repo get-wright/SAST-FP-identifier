@@ -144,3 +144,67 @@ async def test_enrich_skips_joern_for_yaml(tmp_path):
 
     mock_joern.taint_check.assert_not_called()
     assert ctx.taint_reachable is None
+
+
+async def test_enrich_attaches_taint_flow(tmp_path):
+    """Enricher should attach TaintFlow when language is supported."""
+    vuln_file = tmp_path / "vuln.py"
+    vuln_file.write_text(
+        "def handle(user_input):\n"
+        "    query = f\"SELECT * FROM t WHERE x = '{user_input}'\"\n"
+        "    cursor.execute(query)\n"
+    )
+
+    from src.core.enricher import Enricher
+    from src.models.semgrep import SemgrepFinding
+
+    finding = SemgrepFinding.model_validate({
+        "check_id": "python.lang.sqli",
+        "path": "vuln.py",
+        "start": {"line": 3, "col": 4},
+        "end": {"line": 3, "col": 30},
+        "extra": {
+            "message": "SQL injection",
+            "severity": "WARNING",
+            "fingerprint": "test123",
+            "metadata": {"cwe": ["CWE-89: SQL Injection"]},
+            "lines": "cursor.execute(query)",
+            "is_ignored": False,
+        },
+    })
+
+    enricher = Enricher(repo_path=str(tmp_path))
+    ctx = await enricher.enrich(finding)
+
+    assert ctx.taint_flow is not None
+    assert len(ctx.taint_flow.path) >= 2
+    assert ctx.taint_flow.source.variable == "user_input"
+
+
+async def test_enrich_taint_flow_none_for_unsupported_language(tmp_path):
+    """Enricher should set taint_flow=None for unsupported languages."""
+    rb_file = tmp_path / "app.rb"
+    rb_file.write_text("def foo\n  bar\nend\n")
+
+    from src.core.enricher import Enricher
+    from src.models.semgrep import SemgrepFinding
+
+    finding = SemgrepFinding.model_validate({
+        "check_id": "ruby.test",
+        "path": "app.rb",
+        "start": {"line": 2, "col": 2},
+        "end": {"line": 2, "col": 5},
+        "extra": {
+            "message": "test",
+            "severity": "INFO",
+            "fingerprint": "rb123",
+            "metadata": {},
+            "lines": "bar",
+            "is_ignored": False,
+        },
+    })
+
+    enricher = Enricher(repo_path=str(tmp_path))
+    ctx = await enricher.enrich(finding)
+
+    assert ctx.taint_flow is None
