@@ -196,3 +196,31 @@ def test_taint_flow_to_dict_recursive_sub_flow():
 def test_finding_context_taint_flow_default_none():
     ctx = FindingContext(code_snippet="x", enclosing_function="f", function_body="def f(): pass")
     assert ctx.taint_flow is None
+
+
+def test_taint_flow_from_dict_round_trip():
+    flow = TaintFlow(
+        path=[
+            FlowStep(variable="x", line=1, expression="x = input()", kind="source"),
+            FlowStep(variable="x", line=2, expression="eval(x)", kind="sink"),
+        ],
+        sanitizers=[SanitizerInfo(name="escape", line=1, cwe_categories=["CWE-79"], conditional=False, verified=True)],
+        unresolved_calls=["unknown_fn"],
+        cross_file_hops=[CrossFileHop(callee="helper", file="h.py", line=5, action="propagates", sub_flow=None)],
+        confidence_factors=["tested"],
+        inferred=InferredSinkSource(sink_expression="eval(x)", sink_type="code_exec",
+                                    expected_sources=["user_input"], inferred_from="cwe"),
+    )
+    d = flow.to_dict()
+    restored = TaintFlow.from_dict(d)
+    assert restored.source.variable == "x"
+    assert restored.sink.kind == "sink"
+    assert len(restored.sanitizers) == 1
+    assert restored.sanitizers[0].name == "escape"
+    assert restored.unresolved_calls == ["unknown_fn"]
+    assert restored.cross_file_hops[0].callee == "helper"
+    assert restored.inferred.sink_type == "code_exec"
+
+
+def test_taint_flow_from_dict_none():
+    assert TaintFlow.from_dict(None) is None

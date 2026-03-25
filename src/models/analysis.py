@@ -29,6 +29,10 @@ class FlowStep:
     def to_dict(self) -> dict:
         return {"variable": self.variable, "line": self.line, "expression": self.expression, "kind": self.kind}
 
+    @classmethod
+    def from_dict(cls, d: dict) -> FlowStep:
+        return cls(variable=d["variable"], line=d["line"], expression=d["expression"], kind=d["kind"])
+
 
 @dataclass
 class SanitizerInfo:
@@ -46,6 +50,11 @@ class SanitizerInfo:
             "conditional": self.conditional, "verified": self.verified,
         }
 
+    @classmethod
+    def from_dict(cls, d: dict) -> SanitizerInfo:
+        return cls(name=d["name"], line=d["line"], cwe_categories=d["cwe_categories"],
+                   conditional=d["conditional"], verified=d["verified"])
+
 
 @dataclass
 class InferredSinkSource:
@@ -61,6 +70,11 @@ class InferredSinkSource:
             "sink_expression": self.sink_expression, "sink_type": self.sink_type,
             "expected_sources": self.expected_sources, "inferred_from": self.inferred_from,
         }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> InferredSinkSource:
+        return cls(sink_expression=d["sink_expression"], sink_type=d["sink_type"],
+                   expected_sources=d["expected_sources"], inferred_from=d["inferred_from"])
 
 
 @dataclass
@@ -79,6 +93,11 @@ class CrossFileHop:
             "action": self.action,
             "sub_flow": self.sub_flow.to_dict() if self.sub_flow else None,
         }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> CrossFileHop:
+        sub = TaintFlow.from_dict(d["sub_flow"]) if d.get("sub_flow") else None
+        return cls(callee=d["callee"], file=d["file"], line=d["line"], action=d["action"], sub_flow=sub)
 
 
 @dataclass
@@ -109,6 +128,19 @@ class TaintFlow:
             "confidence_factors": self.confidence_factors,
             "inferred": self.inferred.to_dict() if self.inferred else None,
         }
+
+    @classmethod
+    def from_dict(cls, d) -> TaintFlow | None:
+        if d is None:
+            return None
+        return cls(
+            path=[FlowStep.from_dict(s) for s in d["path"]],
+            sanitizers=[SanitizerInfo.from_dict(s) for s in d.get("sanitizers", [])],
+            unresolved_calls=d.get("unresolved_calls", []),
+            cross_file_hops=[CrossFileHop.from_dict(h) for h in d.get("cross_file_hops", [])],
+            confidence_factors=d.get("confidence_factors", []),
+            inferred=InferredSinkSource.from_dict(d["inferred"]) if d.get("inferred") else None,
+        )
 
 
 @dataclass

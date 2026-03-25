@@ -19,7 +19,7 @@ from src.graph.manager import GraphManager
 from src.llm.json_extractor import extract_json_array
 from src.llm.prompt_builder import SYSTEM_PROMPT, build_grouped_prompt
 from src.llm.provider import LLMProvider, create_provider
-from src.models.analysis import AnalysisResult, CallerInfo, FileGroupResult, FindingContext, FindingVerdict
+from src.models.analysis import AnalysisResult, CallerInfo, FileGroupResult, FindingContext, FindingVerdict, TaintFlow
 from src.models.semgrep import SemgrepFinding, parse_semgrep_json
 from src.repo.handler import RepoHandler
 from src.sbom.generator import generate_sbom
@@ -461,6 +461,7 @@ class Orchestrator:
                     taint_sanitized=ctx.get("taint_sanitized"),
                     taint_path=ctx.get("taint_path", []),
                     taint_sanitizers=ctx.get("taint_sanitizers", []),
+                    taint_flow=TaintFlow.from_dict(ctx.get("taint_flow")),
                 )
                 for i, ctx in cached_contexts.items()
             }
@@ -547,6 +548,7 @@ class Orchestrator:
                     "taint_sanitized": ctx.taint_sanitized,
                     "taint_path": ctx.taint_path,
                     "taint_sanitizers": ctx.taint_sanitizers,
+                    "taint_flow": ctx.taint_flow.to_dict() if ctx.taint_flow else None,
                 }
                 for i, ctx in contexts.items()
             },
