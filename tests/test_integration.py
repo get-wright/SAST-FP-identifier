@@ -54,6 +54,7 @@ async def test_full_pipeline_mocked(tmp_path):
         VerdictOutput(
             finding_index=1,
             reasoning="exec with user input is dangerous",
+            dataflow_analysis="User input flows directly to exec() call without sanitization.",
             verdict="true_positive",
             confidence=0.91,
         ),

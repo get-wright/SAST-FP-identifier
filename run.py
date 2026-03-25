@@ -41,6 +41,7 @@ def main():
         fp_threshold=settings.FP_CONFIDENCE_THRESHOLD,
         max_findings=settings.MAX_FINDINGS_PER_REQUEST,
         context_lines=settings.MAX_CONTEXT_LINES,
+        prompt_strategy=settings.LLM_PROMPT_STRATEGY,
     )
     uvicorn.run(app, host=settings.HOST, port=settings.PORT, log_level=settings.LOG_LEVEL.lower())
 

@@ -16,9 +16,15 @@ from src.core.enricher import Enricher
 from src.core.triage_memory import TriageMemoryStore
 from src.graph.joern_manager import JoernManager
 from src.graph.manager import GraphManager
-from src.llm.prompt_builder import SYSTEM_PROMPT, build_grouped_prompt
+from src.llm.prompt_builder import (
+    SYSTEM_PROMPT_SINGLE_PASS,
+    SYSTEM_PROMPT_DATAFLOW,
+    SYSTEM_PROMPT_VERDICT,
+    build_dataflow_prompt,
+    build_grouped_prompt,
+)
 from src.llm.provider import create_chat_model
-from src.llm.schemas import VerdictOutputBatch
+from src.llm.schemas import DataflowBatch, VerdictOnlyBatch, VerdictOutputBatch
 from langchain_core.language_models import BaseChatModel
 from src.models.analysis import AnalysisResult, CallerInfo, FileGroupResult, FindingContext, FindingVerdict, TaintFlow
 from src.models.semgrep import SemgrepFinding, parse_semgrep_json
@@ -203,6 +209,7 @@ class Orchestrator:
         fp_threshold: float = 0.8,
         max_findings: int = 200,
         context_lines: int = 20,
+        prompt_strategy: str = "single_pass",
     ):
         self._repo = RepoHandler(
             cache_dir=repos_cache_dir,
@@ -237,6 +244,7 @@ class Orchestrator:
         self._triage_memory = TriageMemoryStore(triage_data_dir)
         self._semaphore = asyncio.Semaphore(llm_max_concurrent)
         self._retry_count = llm_retry_count
+        self._prompt_strategy = prompt_strategy
         self._fp_threshold = fp_threshold
         self._max_findings = max_findings
         self._context_lines = context_lines
@@ -600,26 +608,21 @@ class Orchestrator:
 
         return verdicts
 
-    async def _analyze_batch(
+    def _prepare_batch(
         self,
         findings: list[SemgrepFinding],
-        contexts: dict[int, FindingContext],
-        repo_map: str,
         repo_url: str,
-        llm: BaseChatModel,
         profile: Optional[RepoProfile],
-        index_offset: int = 0,
-    ) -> list[FindingVerdict]:
-        """Send a single batch of findings to the LLM."""
+    ) -> tuple[list[dict[str, Any]], dict[int, list]]:
+        """Build findings_text and finding_memories for a batch."""
         framework = profile.framework if profile else None
-        findings_text = []
-        finding_memories = {}
+        findings_text: list[dict[str, Any]] = []
+        finding_memories: dict[int, list] = {}
         for i, f in enumerate(findings):
             entry: dict[str, Any] = {
                 "index": i, "rule": f.check_id, "line": f.start_line,
                 "message": f.message, "severity": f.severity,
             }
-            # Include Semgrep rule metadata for dynamic CWE rubric selection
             rule_conf = f.metadata.get("confidence")
             if rule_conf:
                 entry["rule_confidence"] = rule_conf
@@ -633,6 +636,28 @@ class Orchestrator:
             matched_memories = self._triage_memory.find_memories(repo_url, framework, f.check_id)
             if matched_memories:
                 finding_memories[i] = matched_memories
+        return findings_text, finding_memories
+
+    async def _analyze_batch(
+        self,
+        findings: list[SemgrepFinding],
+        contexts: dict[int, FindingContext],
+        repo_map: str,
+        repo_url: str,
+        llm: BaseChatModel,
+        profile: Optional[RepoProfile],
+        index_offset: int = 0,
+    ) -> list[FindingVerdict]:
+        """Send a single batch of findings to the LLM."""
+        findings_text, finding_memories = self._prepare_batch(findings, repo_url, profile)
+
+        if self._prompt_strategy == "two_stage":
+            return await self._analyze_batch_two_stage(
+                findings, findings_text, contexts, llm, profile, repo_map, repo_url,
+                finding_memories, index_offset,
+            )
+
+        # Single-pass path
         prompt = build_grouped_prompt(
             file_path=findings[0].path,
             findings=findings_text,
@@ -641,9 +666,17 @@ class Orchestrator:
             repo_map=repo_map,
             profile=profile,
         )
+        parsed = await self._run_single_pass_batch(llm, prompt)
+        return self._map_verdicts(parsed, findings, finding_memories, index_offset)
 
+    async def _run_single_pass_batch(
+        self,
+        llm: BaseChatModel,
+        prompt: str,
+    ) -> list[dict[str, Any]]:
+        """Execute single-pass LLM call and return parsed verdict dicts."""
         structured = llm.with_structured_output(VerdictOutputBatch)
-        messages = [("system", SYSTEM_PROMPT), ("human", prompt)]
+        messages = [("system", SYSTEM_PROMPT_SINGLE_PASS), ("human", prompt)]
 
         async with self._semaphore:
             batch_result = None
@@ -658,11 +691,84 @@ class Orchestrator:
                         logger.error("LLM failed after %d retries: %s", self._retry_count, e)
 
         if batch_result is None:
+            return []
+        return [v.model_dump() for v in batch_result.verdicts]
+
+    async def _analyze_batch_two_stage(
+        self,
+        findings: list[SemgrepFinding],
+        findings_text: list[dict[str, Any]],
+        contexts: dict[int, FindingContext],
+        llm: BaseChatModel,
+        profile: Optional[RepoProfile],
+        repo_map: str,
+        repo_url: str,
+        finding_memories: dict[int, list],
+        index_offset: int,
+    ) -> list[FindingVerdict]:
+        """Two-stage analysis: Stage 1 (dataflow) -> Stage 2 (verdict)."""
+        file_path = findings[0].path
+
+        # Stage 1: dataflow analysis
+        df_prompt = build_dataflow_prompt(file_path, findings_text, contexts)
+        df_structured = llm.with_structured_output(DataflowBatch)
+        messages1 = [("system", SYSTEM_PROMPT_DATAFLOW), ("human", df_prompt)]
+
+        try:
+            async with self._semaphore:
+                df_result = await df_structured.ainvoke(messages1)
+        except Exception as e:
+            logger.warning("Stage 1 (dataflow) failed, falling back to single-pass: %s", e)
+            prompt = build_grouped_prompt(
+                file_path=file_path, findings=findings_text, contexts=contexts,
+                memories=finding_memories, repo_map=repo_map, profile=profile,
+            )
+            parsed = await self._run_single_pass_batch(llm, prompt)
+            return self._map_verdicts(parsed, findings, finding_memories, index_offset)
+
+        # Stage 2: verdict with dataflow summaries
+        summaries = {r.finding_index: r.model_dump() for r in df_result.results}
+        stage2_prompt = build_grouped_prompt(
+            file_path=file_path, findings=findings_text, contexts=contexts,
+            memories=finding_memories, repo_map=repo_map, profile=profile,
+            dataflow_summaries=summaries,
+        )
+        v_structured = llm.with_structured_output(VerdictOnlyBatch)
+        messages2 = [("system", SYSTEM_PROMPT_VERDICT), ("human", stage2_prompt)]
+
+        async with self._semaphore:
+            v_result = None
+            for attempt in range(1 + self._retry_count):
+                try:
+                    v_result = await v_structured.ainvoke(messages2)
+                    break
+                except Exception as e:
+                    if attempt < self._retry_count:
+                        await asyncio.sleep(1 * (2 ** attempt))
+                    else:
+                        logger.error("Stage 2 LLM failed after retries: %s", e)
+
+        if v_result is None:
             parsed = []
         else:
-            parsed = [v.model_dump() for v in batch_result.verdicts]
+            # Merge Stage 1 dataflow into Stage 2 verdicts
+            parsed = []
+            for v in v_result.verdicts:
+                d = v.model_dump()
+                df_match = summaries.get(v.finding_index, {})
+                d["dataflow_analysis"] = df_match.get("dataflow_analysis", "")
+                parsed.append(d)
 
-        # Map results back to findings (handle both 0-indexed and 1-indexed from LLM)
+        return self._map_verdicts(parsed, findings, finding_memories, index_offset)
+
+    def _map_verdicts(
+        self,
+        parsed: list[dict[str, Any]],
+        findings: list[SemgrepFinding],
+        finding_memories: dict[int, list],
+        index_offset: int,
+    ) -> list[FindingVerdict]:
+        """Map parsed LLM dicts back to FindingVerdict objects."""
         verdicts = []
         for i, finding in enumerate(findings):
             matched = next(
@@ -671,7 +777,6 @@ class Orchestrator:
             )
             global_index = i + index_offset
             if matched:
-                # Parse verdict with fallback for old-format LLM responses
                 verdict = matched.get("verdict", "uncertain")
                 if verdict not in ("true_positive", "false_positive", "uncertain"):
                     if "is_false_positive" in matched:
@@ -684,6 +789,7 @@ class Orchestrator:
                     verdict=verdict,
                     confidence=matched.get("confidence", 0.0),
                     reasoning=matched.get("reasoning", ""),
+                    dataflow_analysis=matched.get("dataflow_analysis", ""),
                     remediation_code=matched.get("remediation_code"),
                     remediation_explanation=matched.get("remediation_explanation"),
                     applied_memory_ids=[m.id for m in finding_memories.get(i, [])],

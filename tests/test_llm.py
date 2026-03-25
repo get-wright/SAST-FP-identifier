@@ -34,8 +34,7 @@ def test_build_grouped_prompt_basic():
     assert "exec-detected" in prompt
     assert "src/app.py" in prompt
     assert "EVIDENCE PER FINDING" in prompt
-    assert "verdict" in prompt
-    assert '"true_positive"' in prompt or '"false_positive"' in prompt
+    assert "Analyze each finding" in prompt
     assert "10 | exec(x)" in prompt
 
 
@@ -80,7 +79,7 @@ def test_build_grouped_prompt_includes_matching_memories():
 
 
 def test_build_grouped_prompt_allows_uncertain_without_biasing_true_positive():
-    assert "Do NOT guess" in SYSTEM_PROMPT
+    assert "uncertain" in SYSTEM_PROMPT
     assert "lean toward true positive" not in SYSTEM_PROMPT
 
 

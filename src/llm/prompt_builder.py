@@ -6,34 +6,56 @@ from src.core.triage_memory import TriageMemory
 from src.llm.cwe_rubrics import get_rubrics_for_findings, format_rubrics_for_prompt
 from src.models.analysis import FindingContext
 
-SYSTEM_PROMPT = """You are a security expert performing false-positive triage on SAST findings.
+SYSTEM_PROMPT_SINGLE_PASS = """You are a security expert performing false-positive triage on SAST findings.
 
-VERIFICATION CHECKLIST — for each finding, reason through:
-1. SOURCE: Is the data user-controlled or from an untrusted source?
-2. SANITIZATION: Is there sanitization/escaping between source and sink? (e.g., escapeHtml(), parameterized queries, textContent)
-3. SINK: Does the untrusted data actually reach the vulnerable sink?
-4. EXPLOITABILITY: Even if data reaches the sink, can it be meaningfully exploited in this context?
+For each finding, consider internally:
+- Is the data user-controlled or from an untrusted source?
+- Is there sanitization/escaping between source and sink?
+- Does untrusted data actually reach the vulnerable sink?
+- Can it be meaningfully exploited in this context?
 
-CWE-specific triage guidance is provided per file-group below based on the actual findings.
+Then produce:
+- "reasoning": A natural paragraph of 3-5 sentences explaining WHY this finding is or is not a real vulnerability. Write as a security reviewer explaining to a colleague. Cite specific code patterns. Do not use section headers or labels like "SOURCE:" — just explain clearly.
+- "dataflow_analysis": A separate paragraph describing HOW data flows through the code. Trace from where data enters (parameter, request, external source) through transformations to the flagged operation. If a TRACED DATA FLOW section is in the evidence, narrate that trace in plain language. If no trace is available, describe what you can infer from the function body. If the finding is not about data flow (e.g., config issue), write "Not applicable — this finding is about configuration, not data flow."
 
-CRITICAL: Optimize for NOT missing true vulnerabilities. Use "uncertain" when the available evidence is insufficient, and only return "false_positive" when you found concrete mitigating evidence.
-Be precise in your reasoning — cite the specific code patterns you observed.
+CRITICAL: Optimize for NOT missing true vulnerabilities. Use "uncertain" when the available evidence is insufficient.
 
 VERDICT CONSISTENCY: Your verdict MUST match your reasoning.
-- If analysis shows the sink is not exploitable due to sanitization → FALSE POSITIVE
-- "Not exploitable" = false positive. Never mark true positive while saying not exploitable.
-- If Joern dataflow says SANITIZED, classify as FALSE POSITIVE unless you can explain why the sanitization is bypassable.
-- If Joern dataflow says NOT REACHABLE, classify as FALSE POSITIVE.
+- If analysis shows data is sanitized or never reaches the sink → false_positive
+- If unsanitized user input reaches a dangerous sink → true_positive
+- If evidence is insufficient → uncertain
 
-VERDICT VALUES:
-- "true_positive": The vulnerability is real and exploitable in this context.
-- "false_positive": The finding is not exploitable due to sanitization, safe patterns, or framework protection.
-- "uncertain": You cannot determine exploitability from the available code context. Do NOT guess — use uncertain.
+CONFIDENCE: 0.0 (guessing) to 1.0 (certain).
+- 0.9+: Clear-cut with strong evidence
+- 0.7-0.9: Likely correct, some ambiguity
+- Below 0.7: Limited evidence, consider "uncertain"
+"""
 
-CONFIDENCE: How certain you are in your verdict (0.0 = guessing, 1.0 = certain).
-- 0.9+: Clear-cut case with strong evidence
-- 0.7-0.9: Likely correct but some ambiguity
-- Below 0.7: Limited evidence, consider using "uncertain" verdict instead"""
+SYSTEM_PROMPT_DATAFLOW = """You are a security engineer analyzing code dataflow. For each finding, trace how data moves through the code.
+
+Describe how data enters the code (function parameter, HTTP request, file read, etc.), what transformations it undergoes (string operations, function calls, assignments), and where it arrives at the flagged operation. Narrate the path step by step in plain language. If a TRACED DATA FLOW section is provided, use it as your guide and narrate it. If the finding is not about data flow, write "Not applicable — this finding is about configuration, not data flow."
+
+Set flow_complete to true if you can trace the full path from source to sink. Set to false if there are gaps (cross-file calls, dynamic dispatch, missing caller context). List the gaps.
+
+Do NOT judge whether the finding is exploitable. Only trace the data movement."""
+
+SYSTEM_PROMPT_VERDICT = """You are a security expert performing false-positive triage. You have been given SAST findings with pre-analyzed dataflow summaries. Use the dataflow analysis to inform your verdict.
+
+Produce a natural paragraph of 3-5 sentences explaining WHY this finding is or is not a real vulnerability. Reference the dataflow analysis where relevant. Write as a security reviewer explaining to a colleague.
+
+VERDICT CONSISTENCY: Your verdict MUST match your reasoning.
+- If the dataflow shows data is sanitized or never reaches the sink → false_positive
+- If the dataflow shows unsanitized user input reaches a dangerous sink → true_positive
+- If the dataflow has gaps and you cannot determine exploitability → uncertain
+
+CONFIDENCE: 0.0 (guessing) to 1.0 (certain).
+- 0.9+: Clear-cut with strong evidence
+- 0.7-0.9: Likely correct, some ambiguity
+- Below 0.7: Limited evidence, consider "uncertain"
+"""
+
+# Backwards compatibility alias
+SYSTEM_PROMPT = SYSTEM_PROMPT_SINGLE_PASS
 
 # Rough chars-per-token estimate
 CHARS_PER_TOKEN = 4
@@ -101,6 +123,49 @@ def _render_taint_flow(flow) -> str:
     return result
 
 
+def build_dataflow_prompt(
+    file_path: str,
+    findings: list[dict],
+    contexts: dict[int, FindingContext],
+    max_tokens: int = 3000,
+) -> str:
+    """Build Stage 1 prompt -- code context + taint trace only, no SBOM/CWE/memories."""
+    max_chars = max_tokens * CHARS_PER_TOKEN
+    parts = [f"FILE: {file_path}\n"]
+
+    finding_parts = []
+    for finding in findings:
+        idx = finding["index"]
+        ctx = contexts.get(idx)
+        if not ctx:
+            continue
+        fnum = idx + 1
+        lines = [f"--- Finding {fnum} ---"]
+        lines.append(f"Rule: {finding['rule']} | Line {finding['line']} — {finding['message']}")
+        if ctx.code_snippet:
+            lines.append(f"CODE:\n{ctx.code_snippet}")
+        if ctx.taint_flow:
+            flow_text = _render_taint_flow(ctx.taint_flow)
+            if flow_text:
+                lines.append(flow_text)
+        if ctx.enclosing_function and ctx.function_body:
+            lines.append(f"ENCLOSING FUNCTION ({ctx.enclosing_function}):\n{ctx.function_body}")
+        if ctx.callers:
+            caller_strs = [f"{c.file}:{c.line} {c.function}()" for c in ctx.callers[:5]]
+            lines.append(f"Called by: {', '.join(caller_strs)}")
+        if ctx.callees:
+            lines.append(f"Calls: {', '.join(ctx.callees[:10])}")
+        finding_parts.append("\n".join(lines))
+
+    if finding_parts:
+        parts.append("\n\n".join(finding_parts))
+
+    prompt = "\n".join(parts)
+    if len(prompt) > max_chars:
+        prompt = prompt[:max_chars] + "\n\n[Context truncated]"
+    return prompt
+
+
 def build_grouped_prompt(
     file_path: str,
     findings: list[dict],
@@ -109,6 +174,7 @@ def build_grouped_prompt(
     max_tokens: int = 6000,
     profile=None,
     memories: dict[int, list[TriageMemory]] | None = None,
+    dataflow_summaries: dict[int, dict] | None = None,
 ) -> str:
     """Build a prompt for all findings in one file.
 
@@ -197,6 +263,16 @@ def build_grouped_prompt(
 
         fnum = idx + 1
         lines = [f"--- Finding {fnum} context ---"]
+
+        # Dataflow summary from Stage 1 (two-stage strategy)
+        if dataflow_summaries and idx in dataflow_summaries:
+            ds = dataflow_summaries[idx]
+            lines.append(f"DATAFLOW SUMMARY: {ds.get('dataflow_analysis', 'N/A')}")
+            complete = "yes" if ds.get("flow_complete") else "no"
+            lines.append(f"FLOW COMPLETE: {complete}")
+            gaps = ds.get("gaps", [])
+            if gaps:
+                lines.append(f"GAPS: {', '.join(gaps)}")
 
         # Taint flow (primary evidence when available)
         if ctx.taint_flow:
@@ -310,21 +386,9 @@ def build_grouped_prompt(
         f"FINDINGS TO TRIAGE ({len(findings)} findings):\n" + "\n".join(finding_lines)
     )
 
-    parts.append("""
-You may think step-by-step before your JSON output.
-Return a JSON array (no other text after the array):
-[
-  {
-    "finding_index": 1,
-    "reasoning": "SOURCE: [where the data originates and whether it is attacker-controlled] | SANITIZATION: [what escaping/validation exists between source and sink, or 'none'] | SINK: [what operation receives the data and whether it is dangerous] | EXPLOITABILITY: [can an attacker meaningfully exploit this, considering the full context]",
-    "verdict": "true_positive" | "false_positive" | "uncertain",
-    "confidence": 0.0 to 1.0,
-    "remediation_code": "fixed code" or null,
-    "remediation_explanation": "how to fix" or null
-  }
-]
-
-IMPORTANT: The "reasoning" field MUST use the exact format above with SOURCE: | SANITIZATION: | SINK: | EXPLOITABILITY: sections separated by " | ". Be concise in each section (1-2 sentences).""")
+    parts.append(
+        "Analyze each finding and provide your verdict with reasoning."
+    )
 
     prompt = "\n".join(parts)
 
