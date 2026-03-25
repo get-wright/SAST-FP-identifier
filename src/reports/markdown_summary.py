@@ -53,6 +53,19 @@ def build_markdown_summary(result: AnalysisResult, threshold: float = 0.8) -> st
         lines.append("None.")
     lines.append("")
 
+    # Dataflow details for true positives
+    df_entries = [(fp, v) for fp, v in true_pos
+                  if v.dataflow_analysis and not v.dataflow_analysis.startswith("Not applicable")]
+    if df_entries:
+        lines.append("")
+        lines.append("<details>")
+        lines.append("<summary>Dataflow Details</summary>")
+        lines.append("")
+        for file_path, v in df_entries:
+            lines.append(f"**{file_path}:{v.finding_index}** — {v.dataflow_analysis}")
+            lines.append("")
+        lines.append("</details>")
+
     # False positives
     lines.append(f"## False Positives ({len(false_pos)}) -- Can Dismiss")
     if false_pos:
@@ -67,6 +80,19 @@ def build_markdown_summary(result: AnalysisResult, threshold: float = 0.8) -> st
         lines.append("None.")
     lines.append("")
 
+    # Dataflow details for false positives
+    df_entries = [(fp, v) for fp, v in false_pos
+                  if v.dataflow_analysis and not v.dataflow_analysis.startswith("Not applicable")]
+    if df_entries:
+        lines.append("")
+        lines.append("<details>")
+        lines.append("<summary>Dataflow Details</summary>")
+        lines.append("")
+        for file_path, v in df_entries:
+            lines.append(f"**{file_path}:{v.finding_index}** — {v.dataflow_analysis}")
+            lines.append("")
+        lines.append("</details>")
+
     # Uncertain
     lines.append(f"## Uncertain ({len(uncertain)}) -- Needs Manual Review")
     if uncertain:
@@ -79,5 +105,18 @@ def build_markdown_summary(result: AnalysisResult, threshold: float = 0.8) -> st
             )
     else:
         lines.append("None.")
+
+    # Dataflow details for uncertain
+    df_entries = [(fp, v) for fp, v in uncertain
+                  if v.dataflow_analysis and not v.dataflow_analysis.startswith("Not applicable")]
+    if df_entries:
+        lines.append("")
+        lines.append("<details>")
+        lines.append("<summary>Dataflow Details</summary>")
+        lines.append("")
+        for file_path, v in df_entries:
+            lines.append(f"**{file_path}:{v.finding_index}** — {v.dataflow_analysis}")
+            lines.append("")
+        lines.append("</details>")
 
     return "\n".join(lines)

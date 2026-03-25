@@ -41,6 +41,7 @@ def build_annotated_json(
                 "decision_source": matched.decision_source,
                 "applied_memory_ids": matched.applied_memory_ids,
                 "override_id": matched.override_id,
+                "dataflow_analysis": matched.dataflow_analysis,
                 "analyzed_at": datetime.now(timezone.utc).isoformat(),
                 "commit_sha": commit_sha,
                 "llm_provider": llm_provider,

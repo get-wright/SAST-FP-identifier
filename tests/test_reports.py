@@ -148,3 +148,58 @@ def test_markdown_summary():
     assert "True Positives" in md
     assert "False Positives" in md
     assert "sql-injection" in md or "app.py" in md
+
+
+def test_annotated_json_includes_dataflow_analysis():
+    from src.reports.annotated_json import build_annotated_json
+    from src.models.analysis import FindingVerdict
+    original = {"results": [{"path": "app.py", "start": {"line": 10}, "extra": {"fingerprint": "abc"}}]}
+    verdicts = {"app.py": [FindingVerdict(
+        finding_index=0, fingerprint="abc", verdict="false_positive", confidence=0.9,
+        reasoning="Safe.", dataflow_analysis="Data enters via request.args.",
+    )]}
+    result = build_annotated_json(original, verdicts, "sha123", "openai")
+    fp = result["results"][0]["extra"]["x_fp_analysis"]
+    assert fp["dataflow_analysis"] == "Data enters via request.args."
+
+
+def test_annotated_json_dataflow_none_when_absent():
+    from src.reports.annotated_json import build_annotated_json
+    from src.models.analysis import FindingVerdict
+    original = {"results": [{"path": "app.py", "start": {"line": 10}, "extra": {"fingerprint": "abc"}}]}
+    verdicts = {"app.py": [FindingVerdict(
+        finding_index=0, fingerprint="abc", verdict="uncertain", confidence=0.5,
+        reasoning="Unclear.",
+    )]}
+    result = build_annotated_json(original, verdicts, "sha123", "openai")
+    fp = result["results"][0]["extra"]["x_fp_analysis"]
+    assert fp["dataflow_analysis"] is None
+
+
+def test_markdown_includes_dataflow_details():
+    from src.reports.markdown_summary import build_markdown_summary
+    from src.models.analysis import AnalysisResult, FileGroupResult, FindingVerdict
+    result = AnalysisResult(repo_url="https://example.com", commit_sha="abc", file_groups=[
+        FileGroupResult(file_path="app.py", verdicts=[
+            FindingVerdict(finding_index=0, verdict="true_positive", confidence=0.95,
+                           reasoning="SQL injection is real.",
+                           dataflow_analysis="User input enters at line 5 via request.args."),
+        ]),
+    ])
+    md = build_markdown_summary(result)
+    assert "Dataflow Details" in md
+    assert "User input enters at line 5" in md
+
+
+def test_markdown_omits_not_applicable_dataflow():
+    from src.reports.markdown_summary import build_markdown_summary
+    from src.models.analysis import AnalysisResult, FileGroupResult, FindingVerdict
+    result = AnalysisResult(repo_url="https://example.com", commit_sha="abc", file_groups=[
+        FileGroupResult(file_path="Dockerfile", verdicts=[
+            FindingVerdict(finding_index=0, verdict="true_positive", confidence=0.9,
+                           reasoning="Missing USER directive.",
+                           dataflow_analysis="Not applicable — this finding is about configuration, not data flow."),
+        ]),
+    ])
+    md = build_markdown_summary(result)
+    assert "Dataflow Details" not in md
