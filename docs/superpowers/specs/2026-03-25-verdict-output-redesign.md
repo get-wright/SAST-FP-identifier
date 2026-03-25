@@ -54,31 +54,63 @@ langchain-openai>=0.3
 langchain-anthropic>=0.3
 ```
 
-**Provider initialization** — replace `src/llm/provider.py` factory:
+**Provider initialization** — replace `src/llm/provider.py` factory with `create_chat_model()`:
 
 ```python
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 
-# OpenAI-compatible (OpenAI, FPT Cloud, OpenRouter)
-llm = ChatOpenAI(
-    api_key=api_key,
-    model=model,
-    base_url=base_url,  # e.g., "https://openrouter.ai/api/v1"
-    temperature=0.3,
-    max_tokens=4000,
-)
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-# Anthropic
-llm = ChatAnthropic(
-    api_key=api_key,
-    model=model,
-    temperature=0.3,
-    max_tokens=4000,
-)
+def create_chat_model(
+    provider_name: str,
+    api_key: str,
+    model: str,
+    base_url: str | None = None,
+    is_reasoning_model: bool = False,
+    temperature: float = 0.3,
+    max_tokens: int = 4000,
+) -> BaseChatModel:
+    """Factory for LangChain chat models. Drop-in replacement for create_provider()."""
+
+    if provider_name in ("fpt_cloud", "openai"):
+        kwargs = {"api_key": api_key, "model": model, "temperature": temperature, "max_tokens": max_tokens}
+        if base_url:
+            kwargs["base_url"] = base_url
+        if is_reasoning_model:
+            kwargs["max_tokens"] = min(max_tokens * 4, 32000)
+            kwargs["model_kwargs"] = {"reasoning_effort": "low"}
+        return ChatOpenAI(**kwargs)
+
+    elif provider_name == "openrouter":
+        return ChatOpenAI(
+            api_key=api_key, model=model,
+            base_url=base_url or OPENROUTER_BASE_URL,
+            temperature=temperature, max_tokens=max_tokens,
+            **({"model_kwargs": {"reasoning_effort": "low"}} if is_reasoning_model else {}),
+        )
+
+    elif provider_name == "anthropic":
+        return ChatAnthropic(
+            api_key=api_key, model=model,
+            temperature=temperature, max_tokens=max_tokens,
+        )
+
+    else:
+        raise ValueError(f"Unknown LLM provider: {provider_name}")
 ```
 
-Both return `BaseChatModel` — same interface, same `.with_structured_output()`, same LCEL composition.
+All providers return `BaseChatModel` — same interface, same `.with_structured_output()`, same LCEL composition. The factory signature matches the current `create_provider()` exactly so the API routes and orchestrator can swap with minimal changes.
+
+**Per-request LLM override** is preserved. The API route's `_build_llm_override()` calls `create_chat_model()` instead of `create_provider()`. The `LLMOverride` request model (`src/api/models.py`) is unchanged — it still accepts `provider`, `api_key`, `model`, `base_url`, `is_reasoning_model`. The orchestrator's `llm_override` parameter changes type from `LLMProvider` to `BaseChatModel`.
+
+**Config env vars** are unchanged:
+- `LLM_PROVIDER` (fpt_cloud, openai, anthropic, openrouter)
+- `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`
+- `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_MAX_CONCURRENT`
+- `LLM_RETRY_COUNT`, `LLM_TIMEOUT`, `LLM_IS_REASONING_MODEL`
+
+No config migration needed.
 
 **Structured output** — replace `json_extractor.py`:
 
@@ -374,9 +406,8 @@ Findings with `dataflow_analysis == None` or starting with "Not applicable" are 
 | File | Reason |
 |------|--------|
 | `src/llm/json_extractor.py` | Replaced by `with_structured_output()` — no more regex fallbacks |
-| `src/llm/provider.py` | Replaced by `langchain-openai` / `langchain-anthropic` chat models |
 
-The `create_provider()` factory is replaced by a new `create_chain()` factory that returns an LCEL chain instead of a raw LLM client.
+**`src/llm/provider.py` is rewritten, not deleted.** It keeps the same factory pattern (`create_chat_model()` replaces `create_provider()`) with the same parameter signature. The `LLMProvider` Protocol and raw OpenAI/Anthropic client wrappers are removed; LangChain `BaseChatModel` replaces them. All existing provider names (`fpt_cloud`, `openai`, `anthropic`, `openrouter`), per-request `LLMOverride`, and `is_reasoning_model` support are preserved.
 
 ## Files Changed
 
