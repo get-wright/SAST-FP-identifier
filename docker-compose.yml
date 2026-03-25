@@ -1,0 +1,35 @@
+services:
+  analyzer:
+    build: .
+    ports:
+      - "${PORT:-8000}:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HOST=0.0.0.0
+      - REPOS_CACHE_DIR=/app/repos_cache
+      - RESULT_CACHE_DIR=/app/cache
+      - INDEX_REGISTRY_PATH=/app/cache/index_registry.json
+      - JOERN_URL=http://joern:8080
+      - JOERN_ENABLED=true
+      - SBOM_ENABLED=true
+    volumes:
+      - repos_cache:/app/repos_cache
+      - result_cache:/app/cache
+    depends_on:
+      - joern
+    restart: unless-stopped
+
+  joern:
+    image: ghcr.io/joernio/joern:nightly
+    command: ["joern", "--server", "--server-host", "0.0.0.0", "--server-port", "8080"]
+    ports:
+      - "8080:8080"
+    volumes:
+      - repos_cache:/repos
+    restart: unless-stopped
+
+volumes:
+  repos_cache:
+  result_cache:

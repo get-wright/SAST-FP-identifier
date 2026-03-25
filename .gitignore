@@ -1,0 +1,38 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment
+.env
+
+# Caches
+repos_cache/
+cache/
+index_registry.json
+index_registry.json.lock
+
+# Docs (generated)
+docs/
+
+# Data
+triage_data/
+
+# Temp files
+tmp_*.js
+*.tmp
+
+# IDE
+.superpowers/
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Semgrep Analyzer</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="header-left">
+      <h1 class="header-title">Semgrep Analyzer</h1>
+    </div>
+    <div class="header-right">
+      <button id="theme-toggle" class="icon-btn" title="Toggle theme" aria-label="Toggle theme">
+        <span class="theme-icon-light">&#9788;</span>
+        <span class="theme-icon-dark">&#9790;</span>
+      </button>
+      <button id="settings-btn" class="icon-btn" title="API settings" aria-label="API settings">&#9881;</button>
+    </div>
+  </header>
+
+  <!-- Settings popover (server API key only) -->
+  <div id="settings-popover" class="popover hidden" role="dialog" aria-label="Server settings">
+    <label class="popover-label" for="api-key-input">Server API Key</label>
+    <input id="api-key-input" type="password" class="input" placeholder="Key for authenticating with this server">
+    <button id="save-api-key" class="btn btn-sm">Save</button>
+  </div>
+
+  <!-- Upload View -->
+  <main id="view-upload" class="view view-centered">
+    <div class="upload-card">
+      <h2 class="upload-title">Analyze Semgrep Results</h2>
+      <p class="upload-subtitle">Upload your Semgrep JSON output for false-positive triage</p>
+
+      <div id="drop-zone" class="drop-zone" tabindex="0" role="button" aria-label="Upload JSON file">
+        <input id="file-input" type="file" accept=".json" class="sr-only">
+        <div id="drop-zone-prompt" class="drop-zone-prompt">
+          <span class="drop-zone-icon">&uarr;</span>
+          <span>Drop <code>.json</code> file here or click to browse</span>
+        </div>
+        <div id="drop-zone-info" class="drop-zone-info hidden">
+          <span id="file-name" class="file-name"></span>
+          <span id="finding-count" class="finding-count"></span>
+          <button id="clear-file" class="btn-link">Remove</button>
+        </div>
+        <div id="drop-zone-warning" class="drop-zone-warning hidden"></div>
+      </div>
+
+      <label class="field-label" for="repo-url-input">Repository URL</label>
+      <div class="repo-url-row">
+        <input id="repo-url-input" type="url" class="input" placeholder="https://github.com/org/repo">
+        <button type="button" id="git-token-toggle" class="icon-btn icon-btn-inline" title="Add token for private repo" aria-label="Add token for private repo" aria-expanded="false">&#9911;</button>
+      </div>
+      <div id="git-token-field" class="git-token-field hidden">
+        <label class="field-label" for="git-token-input">Git Token <span class="optional-hint">(for private repos)</span></label>
+        <input id="git-token-input" type="password" class="input" placeholder="GitHub PAT or OAuth token">
+      </div>
+
+      <!-- LLM Provider config -->
+      <details id="llm-config" class="llm-config">
+        <summary class="llm-config-summary">
+          <span class="llm-config-title">LLM Provider</span>
+          <span id="llm-config-badge" class="llm-config-badge">Server default</span>
+        </summary>
+        <div class="llm-config-body">
+          <div class="provider-cards" role="radiogroup" aria-label="LLM Provider">
+            <button type="button" class="provider-card selected" data-provider="" role="radio" aria-checked="true">
+              <span class="provider-card-name">Server default</span>
+              <span class="provider-card-desc">Use server-configured LLM</span>
+            </button>
+            <button type="button" class="provider-card" data-provider="fpt_cloud" role="radio" aria-checked="false">
+              <span class="provider-card-name">FPT Cloud</span>
+              <span class="provider-card-desc">GLM-4.5</span>
+            </button>
+            <button type="button" class="provider-card" data-provider="openai" role="radio" aria-checked="false">
+              <span class="provider-card-name">OpenAI</span>
+              <span class="provider-card-desc">GPT-4.1 / GPT-5.4</span>
+            </button>
+            <button type="button" class="provider-card" data-provider="anthropic" role="radio" aria-checked="false">
+              <span class="provider-card-name">Anthropic</span>
+              <span class="provider-card-desc">Claude Sonnet / Opus 4.6</span>
+            </button>
+            <button type="button" class="provider-card" data-provider="openrouter" role="radio" aria-checked="false">
+              <span class="provider-card-name">OpenRouter</span>
+              <span class="provider-card-desc">Multi-provider gateway</span>
+            </button>
+          </div>
+
+          <div id="llm-fields" class="llm-fields hidden">
+            <label class="field-label" for="llm-api-key-input">API Key</label>
+            <input id="llm-api-key-input" type="password" class="input" placeholder="Provider API key">
+
+            <div class="llm-fields-row">
+              <div class="llm-field-group">
+                <label class="field-label" for="llm-model-input">Model <span class="optional-hint">(optional)</span></label>
+                <input id="llm-model-input" type="text" class="input" list="model-suggestions">
+                <datalist id="model-suggestions"></datalist>
+                <div id="llm-model-hint" class="input-hint"></div>
+              </div>
+              <div id="llm-base-url-group" class="llm-field-group hidden">
+                <label class="field-label" for="llm-base-url-input">Base URL <span class="optional-hint">(optional)</span></label>
+                <input id="llm-base-url-input" type="url" class="input" placeholder="Custom endpoint">
+              </div>
+            </div>
+            <label class="reasoning-model-label">
+              <input type="checkbox" id="llm-reasoning-model">
+              <span>Reasoning model</span>
+              <span class="optional-hint">(higher token budget for o1, o3, gpt-oss, R1)</span>
+            </label>
+          </div>
+        </div>
+      </details>
+
+      <button id="analyze-btn" class="btn btn-primary" disabled>Analyze</button>
+    </div>
+  </main>
+
+  <!-- Progress View -->
+  <main id="view-progress" class="view view-centered hidden">
+    <div class="progress-card">
+      <div id="progress-spinner" class="spinner"></div>
+      <p id="progress-step" class="progress-step">Starting analysis...</p>
+      <div id="progress-bar-container" class="progress-bar-container">
+        <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
+      </div>
+      <div id="progress-trace" class="trace-log hidden"></div>
+      <div id="progress-error" class="progress-error hidden">
+        <p id="progress-error-msg" class="error-msg"></p>
+        <button id="try-again-btn" class="btn">Try Again</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- Results View -->
+  <main id="view-results" class="view hidden">
+    <!-- Results header -->
+    <div class="results-header">
+      <div class="results-header-left">
+        <h2 id="results-repo" class="results-repo"></h2>
+        <span id="results-sha" class="results-sha"></span>
+        <span class="results-sep">&middot;</span>
+        <span id="results-summary" class="results-summary"></span>
+        <span id="results-framework" class="results-framework hidden"></span>
+      </div>
+      <div class="results-header-right">
+        <button id="trace-btn" class="btn btn-sm hidden" aria-expanded="false">Trace</button>
+        <button id="relationship-map-btn" class="btn btn-sm hidden" aria-expanded="false">View Relationships</button>
+        <div class="export-dropdown">
+          <button id="export-btn" class="btn btn-sm">Export &#9662;</button>
+          <div id="export-menu" class="export-menu hidden">
+            <button id="export-json" class="export-item">Download JSON</button>
+            <button id="export-md" class="export-item">Copy Markdown</button>
+          </div>
+        </div>
+        <button id="new-analysis-btn" class="btn btn-sm">New Analysis</button>
+      </div>
+    </div>
+
+    <!-- Warnings -->
+    <div id="warnings-bar" class="warnings-bar hidden"></div>
+
+    <!-- Pipeline trace -->
+    <div id="trace-section" class="trace-section hidden">
+      <div id="trace-log" class="trace-log"></div>
+    </div>
+
+    <!-- Relationship map (cross-finding) -->
+    <div id="relationship-map-section" class="relationship-map hidden">
+      <div id="relationship-map-container" class="graph-container" style="height:350px"></div>
+    </div>
+
+    <!-- Master-detail -->
+    <div class="results-body">
+      <!-- Left: findings list -->
+      <div class="findings-panel">
+        <div class="filter-tabs" role="tablist">
+          <button class="filter-tab active" data-filter="all" role="tab" aria-selected="true">All</button>
+          <button class="filter-tab" data-filter="true_positive" role="tab">True Positives</button>
+          <button class="filter-tab" data-filter="false_positive" role="tab">False Positives</button>
+          <button class="filter-tab" data-filter="uncertain" role="tab">Uncertain</button>
+        </div>
+        <div id="findings-list" class="findings-list"></div>
+      </div>
+
+      <!-- Right: detail -->
+      <div id="detail-panel" class="detail-panel">
+        <div id="detail-empty" class="detail-empty">
+          <p>Select a finding to view details</p>
+        </div>
+        <div id="detail-content" class="detail-content hidden"></div>
+      </div>
+    </div>
+</main>
+
+  <script src="https://unpkg.com/cytoscape@3/dist/cytoscape.min.js"></script>
+  <script src="https://unpkg.com/dagre@0.8/dist/dagre.min.js"></script>
+  <script src="https://unpkg.com/cytoscape-dagre@2/cytoscape-dagre.js"></script>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
