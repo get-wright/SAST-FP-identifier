@@ -8,6 +8,11 @@ from src.models.analysis import (
     AnalysisResult,
     CallerInfo,
     FindingContext,
+    FlowStep,
+    SanitizerInfo,
+    CrossFileHop,
+    InferredSinkSource,
+    TaintFlow,
 )
 
 
@@ -122,3 +127,72 @@ def test_finding_context_dataclass():
     )
     assert ctx.enclosing_function == "handle_request"
     assert ctx.source == "tree_sitter"
+
+
+def test_taint_flow_source_sink_properties():
+    steps = [
+        FlowStep(variable="user_input", line=5, expression="user_input = request.args.get('q')", kind="source"),
+        FlowStep(variable="query", line=8, expression="query = f'SELECT ... {user_input}'", kind="assignment"),
+        FlowStep(variable="query", line=9, expression="cursor.execute(query)", kind="sink"),
+    ]
+    flow = TaintFlow(
+        path=steps,
+        sanitizers=[],
+        unresolved_calls=[],
+        cross_file_hops=[],
+        confidence_factors=["direct param to sink", "no sanitizer found"],
+        inferred=None,
+    )
+    assert flow.source.variable == "user_input"
+    assert flow.source.kind == "source"
+    assert flow.sink.variable == "query"
+    assert flow.sink.kind == "sink"
+    assert len(flow.path) == 3
+
+
+def test_taint_flow_to_dict():
+    flow = TaintFlow(
+        path=[
+            FlowStep(variable="x", line=1, expression="x = input()", kind="source"),
+            FlowStep(variable="x", line=2, expression="eval(x)", kind="sink"),
+        ],
+        sanitizers=[
+            SanitizerInfo(name="escape", line=1, cwe_categories=["CWE-79"], conditional=False, verified=True),
+        ],
+        unresolved_calls=["unknown_fn"],
+        cross_file_hops=[
+            CrossFileHop(callee="helper", file="utils.py", line=10, action="propagates", sub_flow=None),
+        ],
+        confidence_factors=["traced"],
+        inferred=InferredSinkSource(
+            sink_expression="eval(x)", sink_type="command_exec",
+            expected_sources=["user_input"], inferred_from="cwe",
+        ),
+    )
+    d = flow.to_dict()
+    assert d["path"][0]["variable"] == "x"
+    assert d["sanitizers"][0]["name"] == "escape"
+    assert d["cross_file_hops"][0]["callee"] == "helper"
+    assert d["cross_file_hops"][0]["sub_flow"] is None
+    assert d["inferred"]["sink_type"] == "command_exec"
+
+
+def test_taint_flow_to_dict_recursive_sub_flow():
+    inner = TaintFlow(
+        path=[FlowStep(variable="y", line=10, expression="return y", kind="return")],
+        sanitizers=[], unresolved_calls=[], cross_file_hops=[],
+        confidence_factors=[], inferred=None,
+    )
+    outer = TaintFlow(
+        path=[FlowStep(variable="x", line=1, expression="x = helper()", kind="call_result")],
+        sanitizers=[], unresolved_calls=[],
+        cross_file_hops=[CrossFileHop(callee="helper", file="h.py", line=10, action="propagates", sub_flow=inner)],
+        confidence_factors=[], inferred=None,
+    )
+    d = outer.to_dict()
+    assert d["cross_file_hops"][0]["sub_flow"]["path"][0]["variable"] == "y"
+
+
+def test_finding_context_taint_flow_default_none():
+    ctx = FindingContext(code_snippet="x", enclosing_function="f", function_body="def f(): pass")
+    assert ctx.taint_flow is None
