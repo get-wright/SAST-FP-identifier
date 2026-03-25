@@ -102,15 +102,13 @@ def create_chat_model(
 
 All providers return `BaseChatModel` — same interface, same `.with_structured_output()`, same LCEL composition. The factory signature matches the current `create_provider()` exactly so the API routes and orchestrator can swap with minimal changes.
 
-**Per-request LLM override** is preserved. The API route's `_build_llm_override()` calls `create_chat_model()` instead of `create_provider()`. The `LLMOverride` request model (`src/api/models.py`) is unchanged — it still accepts `provider`, `api_key`, `model`, `base_url`, `is_reasoning_model`. The orchestrator's `llm_override` parameter changes type from `LLMProvider` to `BaseChatModel`.
+**All LLM configuration comes from the API request, not .env.** The `LLMOverride` model in `src/api/models.py` is the sole source of LLM settings — `provider`, `api_key`, `model`, `base_url`, `is_reasoning_model` are all provided per-request by the frontend. The `.env` file has no LLM variables.
 
-**Config env vars** are unchanged:
-- `LLM_PROVIDER` (fpt_cloud, openai, anthropic, openrouter)
-- `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`
-- `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_MAX_CONCURRENT`
-- `LLM_RETRY_COUNT`, `LLM_TIMEOUT`, `LLM_IS_REASONING_MODEL`
-
-No config migration needed.
+This means:
+- `create_chat_model()` is always called from the API route with request-provided values
+- The orchestrator receives a `BaseChatModel` instance — it never reads LLM config from env
+- The `Settings` class LLM fields (`LLM_PROVIDER`, `LLM_API_KEY`, etc.) serve only as fallback defaults if the frontend omits `llm_override`. They can be left empty in `.env`.
+- The orchestrator's `llm_override` parameter changes type from `LLMProvider` to `BaseChatModel`
 
 **Structured output** — replace `json_extractor.py`:
 
