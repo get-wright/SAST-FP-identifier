@@ -4,7 +4,7 @@ import pytest
 from src.llm.json_extractor import extract_json_array
 from src.llm.prompt_builder import SYSTEM_PROMPT, build_grouped_prompt
 from src.core.triage_memory import TriageMemory
-from src.llm.provider import create_provider
+from src.llm.provider import create_chat_model
 from src.models.analysis import FindingContext
 
 
@@ -161,128 +161,45 @@ def test_build_grouped_prompt_respects_max_tokens():
 
 # --- Provider factory test ---
 
-def test_create_provider_fpt_cloud():
-    p = create_provider("fpt_cloud", api_key="test", base_url="http://x", model="m")
-    assert p is not None
+def test_create_chat_model_openai():
+    from src.llm.provider import create_chat_model
+    from langchain_core.language_models import BaseChatModel
+    model = create_chat_model("openai", "sk-test", "gpt-4o", base_url="https://api.openai.com/v1")
+    assert isinstance(model, BaseChatModel)
 
 
-def test_create_provider_openai():
-    p = create_provider("openai", api_key="test", model="gpt-4")
-    assert p is not None
+def test_create_chat_model_fpt_cloud():
+    from src.llm.provider import create_chat_model
+    from langchain_core.language_models import BaseChatModel
+    model = create_chat_model("fpt_cloud", "test-key", "GLM-4.5", base_url="https://mkp-api.fptcloud.com")
+    assert isinstance(model, BaseChatModel)
 
 
-def test_create_provider_anthropic():
-    p = create_provider("anthropic", api_key="test", model="claude-3")
-    assert p is not None
+def test_create_chat_model_openrouter():
+    from src.llm.provider import create_chat_model
+    from langchain_core.language_models import BaseChatModel
+    model = create_chat_model("openrouter", "sk-or-test", "google/gemini-2.5-flash")
+    assert isinstance(model, BaseChatModel)
 
 
-def test_create_provider_unknown_raises():
-    with pytest.raises(ValueError):
-        create_provider("unknown", api_key="test", model="m")
+def test_create_chat_model_anthropic():
+    from src.llm.provider import create_chat_model
+    from langchain_core.language_models import BaseChatModel
+    model = create_chat_model("anthropic", "sk-ant-test", "claude-sonnet-4-6-20250514")
+    assert isinstance(model, BaseChatModel)
 
 
-def test_create_provider_openrouter():
-    p = create_provider("openrouter", api_key="test", model="gpt-oss-120b")
-    assert p is not None
+def test_create_chat_model_unknown_raises():
+    from src.llm.provider import create_chat_model
+    import pytest
+    with pytest.raises(ValueError, match="Unknown LLM provider"):
+        create_chat_model("unknown", "key", "model")
 
 
-def test_create_provider_accepts_reasoning_flag():
-    """create_provider should accept is_reasoning_model without error."""
-    p = create_provider("openai", api_key="test", model="o3", is_reasoning_model=True)
-    assert p is not None
-
-
-def test_create_provider_anthropic_reasoning_flag_warns(caplog):
-    """Anthropic provider should accept is_reasoning_model but log a warning."""
-    import logging
-    with caplog.at_level(logging.WARNING):
-        p = create_provider("anthropic", api_key="test", model="claude-3", is_reasoning_model=True)
-    assert p is not None
-    assert "no effect" in caplog.text.lower() or "is_reasoning_model" in caplog.text
-
-
-# --- Reasoning model integration tests ---
-
-async def test_reasoning_provider_uses_max_completion_tokens(monkeypatch):
-    """Verify reasoning model provider sends max_completion_tokens instead of max_tokens."""
-    captured_kwargs = {}
-
-    class FakeResponse:
-        class Choice:
-            finish_reason = "stop"
-            class message:
-                content = '[{"finding_index": 1, "verdict": "true_positive", "confidence": 0.9, "reasoning": "test"}]'
-        choices = [Choice()]
-        class usage:
-            prompt_tokens = 100
-            completion_tokens = 200
-
-    async def fake_create(**kwargs):
-        captured_kwargs.update(kwargs)
-        return FakeResponse()
-
-    provider = create_provider("openai", api_key="test", model="o3", is_reasoning_model=True)
-    monkeypatch.setattr(provider._client.chat.completions, "create", fake_create)
-
-    await provider.complete("system prompt", "user prompt", temperature=0.3, max_tokens=4000)
-
-    assert "max_completion_tokens" in captured_kwargs
-    assert "max_tokens" not in captured_kwargs
-    assert "temperature" not in captured_kwargs
-    assert captured_kwargs["max_completion_tokens"] == 16000
-
-
-async def test_non_reasoning_provider_uses_max_tokens(monkeypatch):
-    """Verify non-reasoning provider sends max_tokens and temperature as before."""
-    captured_kwargs = {}
-
-    class FakeResponse:
-        class Choice:
-            finish_reason = "stop"
-            class message:
-                content = "[]"
-        choices = [Choice()]
-        usage = None
-
-    async def fake_create(**kwargs):
-        captured_kwargs.update(kwargs)
-        return FakeResponse()
-
-    provider = create_provider("openai", api_key="test", model="gpt-4.1")
-    monkeypatch.setattr(provider._client.chat.completions, "create", fake_create)
-
-    await provider.complete("system", "prompt", temperature=0.3, max_tokens=4000)
-
-    assert "max_tokens" in captured_kwargs
-    assert "max_completion_tokens" not in captured_kwargs
-    assert captured_kwargs["temperature"] == 0.3
-
-
-async def test_finish_reason_length_logs_warning(monkeypatch, caplog):
-    """Verify truncation warning is logged when finish_reason is 'length'."""
-    import logging
-
-    class FakeResponse:
-        class Choice:
-            finish_reason = "length"
-            class message:
-                content = '[{"finding_index": 1}]'
-        choices = [Choice()]
-        class usage:
-            prompt_tokens = 500
-            completion_tokens = 4000
-
-    async def fake_create(**kwargs):
-        return FakeResponse()
-
-    provider = create_provider("openai", api_key="test", model="gpt-4.1")
-    monkeypatch.setattr(provider._client.chat.completions, "create", fake_create)
-
-    with caplog.at_level(logging.WARNING):
-        await provider.complete("system", "prompt")
-
-    assert "truncated" in caplog.text.lower()
-    assert "finish_reason=length" in caplog.text
+def test_create_chat_model_reasoning():
+    from src.llm.provider import create_chat_model
+    model = create_chat_model("openai", "sk-test", "o3", is_reasoning_model=True)
+    assert model is not None
 
 
 def test_prompt_includes_taint_flow():
