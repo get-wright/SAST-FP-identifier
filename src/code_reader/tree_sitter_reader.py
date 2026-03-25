@@ -37,6 +37,12 @@ class LanguageConfig:
     has_arrow_functions: bool = False               # needs parent variable_declarator lookup
     lazy_module: str = ""                          # module to import lazily (empty = already imported)
     lazy_func: str = "language"                    # function name on the module
+    # Taint-specific fields (empty = language does not support flow tracking)
+    assignment_types: tuple[str, ...] = ()
+    parameter_types: tuple[str, ...] = ()
+    return_types: tuple[str, ...] = ()
+    conditional_types: tuple[str, ...] = ()
+    dangerous_sources: tuple[str, ...] = ()
 
 
 # Core languages (always imported)
@@ -45,40 +51,81 @@ _LANG_REGISTRY: dict[str, tuple[object, LanguageConfig]] = {
         func_types=["function_definition"],
         call_types=["call"],
         import_style="python",
+        assignment_types=("assignment", "augmented_assignment"),
+        parameter_types=("parameters",),
+        return_types=("return_statement",),
+        conditional_types=("if_statement", "try_statement", "elif_clause", "else_clause"),
+        dangerous_sources=("request.args", "request.form", "request.json", "request.data",
+                           "os.environ", "sys.argv", "input()", "request.GET", "request.POST"),
     )),
     ".js": (ts_javascript, LanguageConfig(
         func_types=["function_declaration", "arrow_function", "method_definition"],
         call_types=["call_expression"],
         import_style="js",
         has_arrow_functions=True,
+        assignment_types=("assignment_expression", "variable_declarator", "augmented_assignment_expression"),
+        parameter_types=("formal_parameters",),
+        return_types=("return_statement",),
+        conditional_types=("if_statement", "try_statement", "switch_statement", "ternary_expression"),
+        dangerous_sources=("req.body", "req.query", "req.params", "req.headers",
+                           "document.location", "window.location", "process.env"),
     )),
     ".jsx": (ts_javascript, LanguageConfig(
         func_types=["function_declaration", "arrow_function", "method_definition"],
         call_types=["call_expression"],
         import_style="js",
         has_arrow_functions=True,
+        assignment_types=("assignment_expression", "variable_declarator", "augmented_assignment_expression"),
+        parameter_types=("formal_parameters",),
+        return_types=("return_statement",),
+        conditional_types=("if_statement", "try_statement", "switch_statement", "ternary_expression"),
+        dangerous_sources=("req.body", "req.query", "req.params", "req.headers",
+                           "document.location", "window.location", "process.env"),
     )),
     ".ts": (language_typescript, LanguageConfig(
         func_types=["function_declaration", "arrow_function", "method_definition"],
         call_types=["call_expression"],
         import_style="js",
         has_arrow_functions=True,
+        assignment_types=("assignment_expression", "variable_declarator", "augmented_assignment_expression"),
+        parameter_types=("formal_parameters",),
+        return_types=("return_statement",),
+        conditional_types=("if_statement", "try_statement", "switch_statement", "ternary_expression"),
+        dangerous_sources=("req.body", "req.query", "req.params", "req.headers",
+                           "document.location", "window.location", "process.env"),
     )),
     ".tsx": (language_tsx, LanguageConfig(
         func_types=["function_declaration", "arrow_function", "method_definition"],
         call_types=["call_expression"],
         import_style="js",
         has_arrow_functions=True,
+        assignment_types=("assignment_expression", "variable_declarator", "augmented_assignment_expression"),
+        parameter_types=("formal_parameters",),
+        return_types=("return_statement",),
+        conditional_types=("if_statement", "try_statement", "switch_statement", "ternary_expression"),
+        dangerous_sources=("req.body", "req.query", "req.params", "req.headers",
+                           "document.location", "window.location", "process.env"),
     )),
     ".go": (ts_go, LanguageConfig(
         func_types=["function_declaration", "method_declaration"],
         call_types=["call_expression"],
         import_style="go",
+        assignment_types=("short_var_declaration", "assignment_statement"),
+        parameter_types=("parameter_list",),
+        return_types=("return_statement",),
+        conditional_types=("if_statement", "switch_statement"),
+        dangerous_sources=("r.URL.Query", "r.FormValue", "r.Body", "os.Getenv", "os.Args"),
     )),
     ".java": (ts_java, LanguageConfig(
         func_types=["method_declaration", "constructor_declaration"],
         call_types=["call_expression"],
         import_style="java",
+        assignment_types=("assignment_expression", "variable_declarator", "local_variable_declaration"),
+        parameter_types=("formal_parameters",),
+        return_types=("return_statement",),
+        conditional_types=("if_statement", "try_statement", "switch_expression"),
+        dangerous_sources=("request.getParameter", "request.getAttribute", "request.getHeader",
+                           "System.getenv", "System.getProperty"),
     )),
     ".php": (ts_php, LanguageConfig(
         func_types=["function_definition", "method_declaration"],
@@ -390,6 +437,14 @@ class TreeSitterReader:
         yield node
         for child in node.children:
             yield from self._walk(child)
+
+    def get_config(self, ext: str):
+        """Public accessor for language config by extension."""
+        return self._get_config(ext)
+
+    def parse_file(self, file_path: str):
+        """Public accessor for parsing a file into AST."""
+        return self._parse_file(file_path)
 
 
 # ---------------------------------------------------------------------------

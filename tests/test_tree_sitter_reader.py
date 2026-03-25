@@ -170,3 +170,48 @@ def test_svelte_ts_extension(reader, tmp_path):
     ts_file.write_text('function setup(): void { return; }\n')
     name = reader.find_enclosing_function(str(ts_file), 1)
     assert name == "setup"
+
+
+# --- Taint field tests ---
+
+def test_python_language_config_has_taint_fields():
+    from src.code_reader.tree_sitter_reader import _LANG_REGISTRY
+    _, config = _LANG_REGISTRY[".py"]
+    assert config.assignment_types
+    assert "assignment" in config.assignment_types
+    assert config.parameter_types
+    assert config.return_types
+    assert config.conditional_types
+
+
+def test_js_language_config_has_taint_fields():
+    from src.code_reader.tree_sitter_reader import _LANG_REGISTRY
+    _, config = _LANG_REGISTRY[".js"]
+    assert "assignment_expression" in config.assignment_types or "variable_declarator" in config.assignment_types
+
+
+def test_go_language_config_has_taint_fields():
+    from src.code_reader.tree_sitter_reader import _LANG_REGISTRY
+    _, config = _LANG_REGISTRY[".go"]
+    assert "short_var_declaration" in config.assignment_types
+
+
+def test_java_language_config_has_taint_fields():
+    from src.code_reader.tree_sitter_reader import _LANG_REGISTRY
+    _, config = _LANG_REGISTRY[".java"]
+    assert "variable_declarator" in config.assignment_types
+
+
+def test_unsupported_language_has_empty_taint_fields():
+    from src.code_reader.tree_sitter_reader import _LANG_REGISTRY
+    _, config = _LANG_REGISTRY[".php"]
+    assert not config.assignment_types
+    assert not config.parameter_types
+
+
+def test_tree_sitter_reader_public_accessors():
+    from src.code_reader.tree_sitter_reader import TreeSitterReader
+    reader = TreeSitterReader()
+    config = reader.get_config(".py")
+    assert config is not None
+    assert config.assignment_types
