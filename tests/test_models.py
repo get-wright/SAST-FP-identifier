@@ -224,3 +224,11 @@ def test_taint_flow_from_dict_round_trip():
 
 def test_taint_flow_from_dict_none():
     assert TaintFlow.from_dict(None) is None
+
+
+def test_finding_verdict_has_dataflow_analysis():
+    v = FindingVerdict(finding_index=0, verdict="false_positive", confidence=0.9,
+                       reasoning="Safe.", dataflow_analysis="Data enters via param.")
+    assert v.dataflow_analysis == "Data enters via param."
+    d = v.model_dump()
+    assert "dataflow_analysis" in d

@@ -175,6 +175,7 @@ class FindingVerdict(BaseModel):
     status: str = "ok"  # "ok", "error", "parse_error"
     decision_source: str = "llm"  # "llm" or "human_override"
     applied_memory_ids: list[str] = Field(default_factory=list)
+    dataflow_analysis: Optional[str] = None
     override_id: Optional[str] = None
 
     def classification(self, threshold: float = 0.8) -> str:

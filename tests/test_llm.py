@@ -219,6 +219,7 @@ def test_verdict_output_schema():
     v = VerdictOutput(
         finding_index=1,
         reasoning="SOURCE: x | SANITIZATION: none | SINK: y | EXPLOITABILITY: z",
+        dataflow_analysis="Data enters at x, flows unsanitized to sink y.",
         verdict="false_positive",
         confidence=0.9,
     )
@@ -239,3 +240,27 @@ def test_verdict_output_schema_clamps_confidence():
     import pytest
     with pytest.raises(Exception):
         VerdictOutput(finding_index=1, reasoning="x", verdict="uncertain", confidence=1.5)
+
+
+def test_verdict_output_has_dataflow_analysis():
+    from src.llm.schemas import VerdictOutput
+    v = VerdictOutput(
+        finding_index=1, reasoning="Safe.",
+        dataflow_analysis="Data enters via param, flows to md5().",
+        verdict="false_positive", confidence=0.9,
+    )
+    assert v.dataflow_analysis == "Data enters via param, flows to md5()."
+
+
+def test_dataflow_result_schema():
+    from src.llm.schemas import DataflowResult, DataflowBatch
+    r = DataflowResult(finding_index=1, dataflow_analysis="Data enters at line 5.", flow_complete=True, gaps=[])
+    batch = DataflowBatch(results=[r])
+    assert batch.results[0].flow_complete is True
+
+
+def test_verdict_only_schema():
+    from src.llm.schemas import VerdictOnlyOutput, VerdictOnlyBatch
+    v = VerdictOnlyOutput(finding_index=1, reasoning="SQL injection is real.", verdict="true_positive", confidence=0.95)
+    batch = VerdictOnlyBatch(verdicts=[v])
+    assert batch.verdicts[0].verdict == "true_positive"

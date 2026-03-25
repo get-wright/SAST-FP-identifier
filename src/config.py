@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     LLM_RETRY_COUNT: int = 2
     LLM_TIMEOUT: int = 60
     LLM_IS_REASONING_MODEL: bool = False
+    LLM_PROMPT_STRATEGY: str = "single_pass"  # "single_pass" or "two_stage"
 
     # Analysis
     FP_CONFIDENCE_THRESHOLD: float = 0.8
