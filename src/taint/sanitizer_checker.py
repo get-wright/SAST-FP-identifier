@@ -33,6 +33,13 @@ for _cwe, _names in _SANITIZER_DB.items():
         if _key not in _SANITIZER_LOOKUP:
             _SANITIZER_LOOKUP[_key] = []
         _SANITIZER_LOOKUP[_key].append(_cwe)
+        # Also index the bare suffix so "escape" matches "html.escape"
+        if "." in _key:
+            _suffix = _key.rsplit(".", 1)[-1]
+            if _suffix not in _SANITIZER_LOOKUP:
+                _SANITIZER_LOOKUP[_suffix] = []
+            if _cwe not in _SANITIZER_LOOKUP[_suffix]:
+                _SANITIZER_LOOKUP[_suffix].append(_cwe)
 
 
 def check_known_sanitizer(callee_name: str) -> Optional[SanitizerInfo]:
