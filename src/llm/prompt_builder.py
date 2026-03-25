@@ -123,6 +123,51 @@ def _render_taint_flow(flow) -> str:
     return result
 
 
+def _slice_code_by_flow(file_path: str, taint_flow, context_radius: int = 5) -> str:
+    """Extract ±N lines around each step in a taint flow trace.
+
+    Returns numbered code slices instead of the full function body.
+    Based on Snyk CodeReduce / LLM4FPM research: less targeted context = better LLM accuracy.
+    """
+    # Collect all relevant line numbers from the flow
+    relevant_lines: set[int] = set()
+    for step in taint_flow.path:
+        if step.line > 0:
+            for offset in range(-context_radius, context_radius + 1):
+                relevant_lines.add(step.line + offset)
+    for san in taint_flow.sanitizers:
+        if san.line > 0:
+            for offset in range(-context_radius, context_radius + 1):
+                relevant_lines.add(san.line + offset)
+
+    if not relevant_lines:
+        return ""
+
+    # Read the file and extract relevant line ranges
+    try:
+        with open(file_path, encoding="utf-8", errors="ignore") as f:
+            all_lines = f.readlines()
+    except OSError:
+        return ""
+
+    total = len(all_lines)
+    relevant_lines = {ln for ln in relevant_lines if 1 <= ln <= total}
+    if not relevant_lines:
+        return ""
+
+    # Group consecutive lines into ranges, insert "..." between gaps
+    sorted_lines = sorted(relevant_lines)
+    slices: list[str] = []
+    prev = -1
+    for ln in sorted_lines:
+        if prev > 0 and ln > prev + 1:
+            slices.append("  ...")
+        slices.append(f"{ln:4d} | {all_lines[ln - 1].rstrip()}")
+        prev = ln
+
+    return "\n".join(slices)
+
+
 def build_dataflow_prompt(
     file_path: str,
     findings: list[dict],
@@ -148,7 +193,25 @@ def build_dataflow_prompt(
             flow_text = _render_taint_flow(ctx.taint_flow)
             if flow_text:
                 lines.append(flow_text)
-        if ctx.enclosing_function and ctx.function_body:
+            # Dataflow-sliced context: ±5 lines around each flow step
+            full_path = f"{ctx.enclosing_function or ''}"
+            # Resolve file path for slicing
+            slice_path = file_path
+            if not file_path.startswith("/"):
+                # Try common prefixes for repo-relative paths
+                import os
+                for candidate in [file_path, os.path.join(".", file_path)]:
+                    if os.path.exists(candidate):
+                        slice_path = candidate
+                        break
+            sliced = _slice_code_by_flow(slice_path, ctx.taint_flow)
+            if sliced:
+                label = f"CODE SLICES around dataflow steps"
+                if ctx.enclosing_function:
+                    label += f" in {ctx.enclosing_function}()"
+                lines.append(f"{label}:\n{sliced}")
+        elif ctx.enclosing_function and ctx.function_body:
+            # Fallback: full function body when no taint flow
             lines.append(f"ENCLOSING FUNCTION ({ctx.enclosing_function}):\n{ctx.function_body}")
         if ctx.callers:
             caller_strs = [f"{c.file}:{c.line} {c.function}()" for c in ctx.callers[:5]]
@@ -328,13 +391,22 @@ def build_grouped_prompt(
                 lines.append(f"Calls: {', '.join(shown)}{suffix}")
 
         else:
-            # Strategy 2: Function-body fallback (tree-sitter only or no taint data)
-            # SINK snippet
+            # Strategy 2: Fallback (tree-sitter only or no Joern taint data)
             if ctx.code_snippet:
                 lines.append(f"SINK (line {finding['line']}):\n{ctx.code_snippet}")
 
-            # Function body as primary context
-            if ctx.enclosing_function and ctx.function_body:
+            # Use dataflow-sliced context when taint flow is available
+            if ctx.taint_flow:
+                import os
+                slice_path = f"{file_path}" if os.path.isabs(file_path) else file_path
+                sliced = _slice_code_by_flow(slice_path, ctx.taint_flow)
+                if sliced:
+                    label = f"CODE SLICES around dataflow steps"
+                    if ctx.enclosing_function:
+                        label += f" in {ctx.enclosing_function}()"
+                    lines.append(f"{label}:\n{sliced}")
+            elif ctx.enclosing_function and ctx.function_body:
+                # Full function body only when no taint flow available
                 lines.append(f"ENCLOSING FUNCTION ({ctx.enclosing_function}):\n{ctx.function_body}")
 
             # Callers as list only (no inlined bodies)
