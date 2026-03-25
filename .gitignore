@@ -31,6 +31,9 @@ triage_data/
 tmp_*.js
 *.tmp
 
+# Claude
+CLAUDE.md
+
 # IDE
 .superpowers/
 .idea/
