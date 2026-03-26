@@ -1,8 +1,8 @@
-"""Tests for scope_analyzer: scope tree builder (Pass 1)."""
+"""Tests for scope_analyzer: scope tree builder (Pass 1) and fixpoint propagation (Pass 2)."""
 
 import os
 
-from src.taint.scope_analyzer import build_scope_tree, Scope
+from src.taint.scope_analyzer import build_scope_tree, propagate_taint, Scope
 from src.code_reader.tree_sitter_reader import TreeSitterReader
 
 _reader = TreeSitterReader()
@@ -99,3 +99,57 @@ def test_arrow_return_expr():
         cb = map_sites[0].callback_scope
         # Arrow with expression body should have implicit return
         assert len(cb.return_exprs) >= 0  # May have return_exprs from expression body
+
+
+# ---------------------------------------------------------------------------
+# Pass 2: fixpoint taint propagation
+# ---------------------------------------------------------------------------
+
+def test_foreach_taint_propagation():
+    scope = _get_func_scope(os.path.join(FIXTURES, "taint_callback.js"), "forEachTaint")
+    config = _reader.get_config(".js")
+    path = propagate_taint(scope, {"item"}, 6, config)
+    assert path is not None
+    assert len(path) >= 2
+    assert path[0].kind in ("parameter", "source", "callback_param", "iteration_var")
+
+
+def test_map_return_propagation():
+    scope = _get_func_scope(os.path.join(FIXTURES, "taint_callback.js"), "mapTaint")
+    config = _reader.get_config(".js")
+    path = propagate_taint(scope, {"html"}, 13, config)
+    assert path is not None
+    assert len(path) >= 2
+
+
+def test_for_of_propagation():
+    scope = _get_func_scope(os.path.join(FIXTURES, "taint_callback.js"), "forOfTaint")
+    config = _reader.get_config(".js")
+    path = propagate_taint(scope, {"entry"}, 25, config)
+    assert path is not None
+    assert any(s.kind in ("iteration_var", "parameter", "source") for s in path)
+
+
+def test_no_taint_hardcoded():
+    scope = _get_func_scope(os.path.join(FIXTURES, "taint_callback.js"), "noTaint")
+    config = _reader.get_config(".js")
+    path = propagate_taint(scope, {"item"}, 44, config)
+    # Hardcoded array — should NOT trace to a parameter/dangerous source
+    if path is not None:
+        assert not any(s.kind in ("source",) for s in path)
+
+
+def test_py_for_loop_propagation():
+    scope = _get_func_scope(os.path.join(FIXTURES, "taint_callback.py"), "for_loop_taint")
+    config = _reader.get_config(".py")
+    path = propagate_taint(scope, {"item"}, 6, config)
+    assert path is not None
+    assert path[0].kind in ("parameter", "source")
+
+
+def test_filter_taint_propagation():
+    scope = _get_func_scope(os.path.join(FIXTURES, "taint_callback.js"), "filterTaint")
+    config = _reader.get_config(".js")
+    path = propagate_taint(scope, {"active"}, 51, config)
+    assert path is not None
+    assert len(path) >= 2

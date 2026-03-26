@@ -1,8 +1,10 @@
-"""Scope tree builder for taint analysis (Pass 1).
+"""Scope tree builder (Pass 1) and fixpoint taint propagation (Pass 2).
 
-Walks a function's AST to build a tree of Scope objects, each representing
-a function/lambda/loop body with its own variable dependency graph.
-Pass 2 (fixpoint propagation) will consume this tree.
+Pass 1: Walks a function's AST to build a tree of Scope objects, each
+representing a function/lambda/loop body with its own variable dependency graph.
+
+Pass 2: Forward-propagates taint across scope boundaries until fixpoint,
+then backward-traces from sink to source to build a FlowStep path.
 """
 
 from __future__ import annotations
@@ -14,6 +16,8 @@ from typing import Optional
 from tree_sitter import Node
 
 from src.code_reader.tree_sitter_reader import LanguageConfig
+from src.models.analysis import FlowStep
+from src.taint.sanitizer_checker import check_known_sanitizer
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +96,305 @@ def build_scope_tree(func_node: Node, config: LanguageConfig) -> Scope:
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# Pass 2: Fixpoint taint propagation
+# ---------------------------------------------------------------------------
+
+# Tainted variables per scope, keyed by scope identity.
+TaintState = dict[int, set[str]]
+
+_MAX_ITERATIONS = 20
+
+
+def propagate_taint(
+    root: Scope,
+    sink_vars: set[str],
+    sink_line: int,
+    config: LanguageConfig,
+) -> Optional[list[FlowStep]]:
+    """Forward-propagate taint then backward-trace from sink to source.
+
+    Returns a list of FlowStep from source to sink, or None if no taint
+    path reaches the sink variables.
+    """
+    state = _init_taint(root, config)
+
+    # Fixpoint: iterate until taint set stops growing
+    for _ in range(_MAX_ITERATIONS):
+        changed = _propagate_round(root, state, config)
+        if not changed:
+            break
+
+    # Find the scope containing the sink line
+    sink_scope = _find_scope_for_line(root, sink_line)
+    if sink_scope is None:
+        sink_scope = root
+
+    # Check that at least one sink var is tainted
+    tainted = state.get(id(sink_scope), set())
+    reachable = sink_vars & tainted
+    if not reachable:
+        return None
+
+    # Backward trace from sink to source
+    sink_var = next(iter(reachable))
+    path = _trace_path(sink_var, sink_scope, state, root, config, set())
+    if path is None:
+        return None
+
+    # Append sink step
+    path.append(FlowStep(
+        variable=sink_var,
+        line=sink_line,
+        expression=_node_line_text(sink_scope.node, sink_line),
+        kind="sink",
+    ))
+    return path
+
+
+def _init_taint(root: Scope, config: LanguageConfig) -> TaintState:
+    """Seed taint: root params are tainted; deps with dangerous sources too."""
+    state: TaintState = {}
+    tainted = set(root.params)
+
+    # Deps whose RHS expression contains a dangerous source
+    for var, entries in root.deps.items():
+        for entry in entries:
+            if _expr_has_dangerous_source(entry.expr, config):
+                tainted.add(var)
+
+    state[id(root)] = tainted
+    return state
+
+
+def _expr_has_dangerous_source(expr: str, config: LanguageConfig) -> bool:
+    for ds in config.dangerous_sources:
+        if ds in expr:
+            return True
+    return False
+
+
+def _propagate_round(scope: Scope, state: TaintState, config: LanguageConfig) -> bool:
+    """One forward-propagation pass over the scope tree. Returns True if anything changed."""
+    changed = False
+    tainted = state.setdefault(id(scope), set())
+    old_size = len(tainted)
+
+    # Forward-propagate deps within this scope
+    # Iterate multiple times within the scope for transitive deps
+    for _ in range(5):
+        inner_changed = False
+        for var, entries in scope.deps.items():
+            if var in tainted:
+                continue
+            for entry in entries:
+                if entry.rhs_ids & tainted:
+                    # Check for sanitizer in the RHS expression
+                    if _dep_is_sanitized(entry):
+                        continue
+                    tainted.add(var)
+                    inner_changed = True
+                    break
+        if not inner_changed:
+            break
+
+    # Process call sites: seed callback params from tainted receivers
+    for cs in scope.call_sites:
+        cb = cs.callback_scope
+        if cb is None:
+            continue
+        cb_tainted = state.setdefault(id(cb), set())
+
+        if cs.receiver_var in tainted:
+            # Seed callback params (element of the collection is tainted)
+            for param in cb.params:
+                if param not in cb_tainted:
+                    cb_tainted.add(param)
+
+        # If callback returns_value and return exprs contain tainted vars,
+        # taint the call result variable in the parent scope
+        if cs.returns_value:
+            for ret in cb.return_exprs:
+                if ret.identifiers & cb_tainted:
+                    result_var = _find_call_result_var(scope, cs)
+                    if result_var and result_var not in tainted:
+                        tainted.add(result_var)
+
+    # Recurse into children
+    for child in scope.children:
+        if _propagate_round(child, state, config):
+            changed = True
+
+    # Re-check callback returns after children propagated
+    for cs in scope.call_sites:
+        cb = cs.callback_scope
+        if cb is None or not cs.returns_value:
+            continue
+        cb_tainted = state.get(id(cb), set())
+        for ret in cb.return_exprs:
+            if ret.identifiers & cb_tainted:
+                result_var = _find_call_result_var(scope, cs)
+                if result_var and result_var not in tainted:
+                    tainted.add(result_var)
+
+    if len(tainted) > old_size:
+        changed = True
+
+    return changed
+
+
+def _dep_is_sanitized(entry: DepEntry) -> bool:
+    """Check if a dep entry's RHS contains a known sanitizer call."""
+    if entry.node is None:
+        return False
+    for n in _walk(entry.node):
+        if n.type in ("call_expression", "call"):
+            func_ref = n.child_by_field_name("function")
+            if func_ref:
+                callee = func_ref.text.decode()
+                # Try the full name and just the last part
+                if check_known_sanitizer(callee) is not None:
+                    return True
+                if "." in callee:
+                    suffix = callee.rsplit(".", 1)[-1]
+                    if check_known_sanitizer(suffix) is not None:
+                        return True
+    return False
+
+
+def _find_call_result_var(scope: Scope, cs: CallSite) -> Optional[str]:
+    """Find which variable receives the result of receiver.method(callback).
+
+    Looks in scope.deps for a var whose RHS contains both the receiver
+    and the method name.
+    """
+    for var, entries in scope.deps.items():
+        for entry in entries:
+            expr = entry.expr
+            if cs.receiver_var in entry.rhs_ids and cs.callee in expr:
+                return var
+    return None
+
+
+def _find_scope_for_line(scope: Scope, line: int) -> Optional[Scope]:
+    """Find the innermost scope containing a given line number."""
+    if scope.node is None:
+        return None
+
+    start = scope.node.start_point[0] + 1
+    end = scope.node.end_point[0] + 1
+    if line < start or line > end:
+        return None
+
+    # Check children first (innermost wins)
+    for child in scope.children:
+        result = _find_scope_for_line(child, line)
+        if result is not None:
+            return result
+
+    # Also check call site callback scopes
+    for cs in scope.call_sites:
+        if cs.callback_scope:
+            result = _find_scope_for_line(cs.callback_scope, line)
+            if result is not None:
+                return result
+
+    return scope
+
+
+def _trace_path(
+    var: str,
+    scope: Scope,
+    state: TaintState,
+    root: Scope,
+    config: LanguageConfig,
+    visited: frozenset[tuple[int, str]],
+) -> Optional[list[FlowStep]]:
+    """Backward trace from a tainted variable to its source.
+
+    Returns path from source to the variable (exclusive of final sink step),
+    or None if no source found.
+    """
+    key = (id(scope), var)
+    if key in visited:
+        return None
+    visited = visited | {key}
+
+    tainted = state.get(id(scope), set())
+    if var not in tainted:
+        return None
+
+    # Base: root scope parameter
+    if scope is root and var in root.params:
+        return [FlowStep(variable=var, line=0, expression=f"parameter: {var}", kind="parameter")]
+
+    # Base: dangerous source in deps
+    for entry in scope.deps.get(var, []):
+        if _expr_has_dangerous_source(entry.expr, config):
+            return [FlowStep(variable=var, line=entry.line, expression=entry.expr, kind="source")]
+
+    # Callback param: trace to parent scope's receiver variable
+    if scope.parent is not None and var in scope.params:
+        parent = scope.parent
+        # Find which call site links to this scope
+        for cs in parent.call_sites:
+            if cs.callback_scope is scope:
+                # This param came from iterating over receiver_var
+                parent_path = _trace_path(cs.receiver_var, parent, state, root, config, visited)
+                if parent_path is not None:
+                    kind = "iteration_var" if cs.callee == "@@iterator" else "callback_param"
+                    step = FlowStep(variable=var, line=0, expression=f"{cs.callee}({var})", kind=kind)
+                    return parent_path + [step]
+
+    # Assignment dep: trace RHS variables
+    for entry in scope.deps.get(var, []):
+        for rhs_var in entry.rhs_ids:
+            if rhs_var == var:
+                continue
+            sub = _trace_path(rhs_var, scope, state, root, config, visited)
+            if sub is not None:
+                return sub + [FlowStep(variable=var, line=entry.line, expression=entry.expr, kind="assignment")]
+
+    # Callback return: if this var is the result of a callback call
+    if scope.parent is None or scope is root:
+        for cs in scope.call_sites:
+            if not cs.returns_value or cs.callback_scope is None:
+                continue
+            result_var = _find_call_result_var(scope, cs)
+            if result_var != var:
+                continue
+            cb = cs.callback_scope
+            cb_tainted = state.get(id(cb), set())
+            for ret in cb.return_exprs:
+                for ret_var in ret.identifiers:
+                    if ret_var in cb_tainted:
+                        sub = _trace_path(ret_var, cb, state, root, config, visited)
+                        if sub is not None:
+                            step = FlowStep(
+                                variable=var, line=ret.line,
+                                expression=ret.expr, kind="callback_return",
+                            )
+                            return sub + [step]
+
+    return None
+
+
+def _node_line_text(node: Optional[Node], line: int) -> str:
+    """Get the text of a specific line from a node's source."""
+    if node is None:
+        return ""
+    try:
+        source = node.text.decode()
+        start_line = node.start_point[0] + 1
+        for i, text in enumerate(source.split("\n"), start_line):
+            if i == line:
+                return text.strip()
+    except (UnicodeDecodeError, AttributeError):
+        pass
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers (Pass 1)
 # ---------------------------------------------------------------------------
 
 def _node_to_scope_kind(node: Node) -> str:
