@@ -1,8 +1,7 @@
 import Router from "preact-router";
 import { Setup } from "./pages/Setup";
 import { Analyzing } from "./pages/Analyzing";
-
-function Results() { return <main><h1>Results</h1></main>; }
+import { Results } from "./pages/Results";
 
 export function App() {
   return (
