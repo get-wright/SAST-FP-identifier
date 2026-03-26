@@ -258,6 +258,18 @@ These reduce `action: "unknown"` gaps, meaning fewer ungrounded gap steps in the
 - **Integration**: `test_orchestrator.py` — grounded steps flow through full pipeline, merge works
 - **Integration**: `test_annotated_json.py` — taint_flow appears in graph_context output
 
+## Implementation Constraint: Documentation-First
+
+Every implementation step MUST look up current documentation for the libraries and APIs being used before writing code. This includes:
+
+- **tree-sitter Python bindings**: Check `py-tree-sitter` docs for correct AST traversal APIs, node field names, and query syntax
+- **Pydantic v2**: Check docs for `BaseModel` field defaults, `Literal` types, serialization behavior, and `model_validator` patterns
+- **FastAPI / SSE**: Check docs for response streaming, event formatting
+- **Preact**: Check docs for hooks, component patterns, CSS module usage
+- **gkg MCP protocol**: Check the MCP client implementation (`src/graph/mcp_client.py`) for exact method signatures and response formats of `get_definition` and `read_definitions`
+
+Use the context7 MCP server (`resolve-library-id` → `query-docs`) to fetch up-to-date documentation for each library before implementing against it. Do not rely on memory — APIs change.
+
 ## What Doesn't Change
 
 - `dataflow_analysis` text narrative — still LLM-generated
