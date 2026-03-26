@@ -12,6 +12,7 @@ _SANITIZER_DB: dict[str, list[str]] = {
         "escapehtml", "htmlspecialchars", "encodeURIComponent",
         "dompurify.sanitize", "textcontent", "innertext",
         "cgi.escape", "xss_clean", "strip_tags",
+        "escape", "encodeURI", "parseInt", "Number",
     ],
     "CWE-89": [
         "parameterize", "prepare", "placeholder", "sanitize_sql",
