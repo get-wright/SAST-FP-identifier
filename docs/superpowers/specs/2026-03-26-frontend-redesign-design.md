@@ -9,7 +9,7 @@ Replace the vanilla JS frontend with a Vite + Preact SPA. Three-panel results la
 - **Vite** — dev server, HMR, production build
 - **Preact 10** + **preact-router** (hash-based routing) — UI components + client-side routing
 - **Preact Signals** — lightweight reactive state management
-- **highlight.js** — syntax highlighting for code blocks
+- **highlight.js** (core + selective languages) — syntax highlighting for code blocks. Import `highlight.js/lib/core` and register only: python, javascript, typescript, go, java, dockerfile, html, css, bash. Keeps bundle under 50KB vs ~1MB for full library.
 - **CSS Modules** — scoped component styles + global theme vars
 
 No component library, no Cytoscape, no dagre. Hand-rolled components matching the dense/dark aesthetic.
@@ -237,7 +237,10 @@ Three-step flow with a stepper bar:
 - 1px borders, no shadows (flat/dense)
 - Verdict badges: solid bg + white text, compact format ("FP 93%")
 - Tabs: bottom-border indicator in accent color
-- Transitions: 150ms hover/focus, no animations
+- Transitions: 150ms hover/focus, no animations. Wrapped in `@media (prefers-reduced-motion: no-preference)`.
+- Text overflow: `text-overflow: ellipsis` + `overflow: hidden` on rule names, file paths in findings list
+- Numeric alignment: `font-variant-numeric: tabular-nums` on confidence percentages and counts
+- Contrast floor: `--text-tertiary` (#6b7280) used only for decorative/non-essential text. All body text uses `--text` or `--text-secondary` (both pass 4.5:1 on dark/light bg)
 
 ## Migration Plan
 
@@ -264,6 +267,30 @@ Three-step flow with a stepper bar:
 - Same SSE protocol, same `/analyze/stream` endpoint, same response JSON shape
 - Same `X-API-Key` header auth, same `llm_override` body field
 
+## Accessibility
+
+### Landmarks
+- Results page: `<header>` (results header bar), `<aside>` (filter sidebar), `<main>` (findings list + detail panel)
+- Setup/Analyzing pages: `<main>` wrapping primary content
+
+### ARIA
+- Provider radio cards: `role="radiogroup"` on container, `role="radio"` + `aria-checked` on each card
+- Detail panel tabs: `role="tablist"` on tab bar, `role="tab"` + `aria-selected` on each tab, `role="tabpanel"` on content
+- Confidence range slider: `role="slider"` + `aria-valuemin="0"` + `aria-valuemax="100"` + `aria-valuenow`
+- Icon-only buttons (theme toggle, export, settings gear): `aria-label` required on each
+- File group headers: `aria-expanded` toggled on collapse/expand
+- Export dropdown: `aria-expanded` on trigger, `aria-haspopup="true"`
+
+### Focus Management
+- Wizard step transitions: focus moves to the first input of the new step
+- Finding selection change: focus stays in the findings list (detail panel updates without stealing focus)
+- Export dropdown: `useClickOutside` hook to dismiss; Escape key also closes
+- 401 redirect: focus moves to the server token banner input
+
+### Contrast
+- All interactive text meets 4.5:1 minimum against its background
+- `--text-tertiary` restricted to decorative elements (timestamps, separators), never interactive or informational text
+
 ## Keyboard Navigation
 
 - **Results page**: Up/Down arrows move finding selection, Left/Right arrows cycle detail tabs (WAI-ARIA tabs pattern)
@@ -272,9 +299,31 @@ Three-step flow with a stepper bar:
 
 ## Mobile / Responsive
 
-- Results page collapses to single-panel on narrow screens: filter sidebar becomes a dropdown, findings list full-width, detail panel opens as overlay/modal
-- Setup wizard is inherently single-column, works as-is
-- Analyzing page is centered, works as-is
+**Breakpoint**: `768px`. Below this threshold, layout adapts.
+
+### Results page (< 768px)
+- Filter sidebar collapses into a slide-out drawer triggered by a filter icon button
+- Findings list takes full width
+- Detail panel opens as a bottom sheet / overlay on finding selection, with a close/back button
+- Touch targets: minimum 44x44px on all interactive elements (finding rows, tabs, buttons)
+
+### Height strategy
+- Three-panel layout uses `height: 100dvh` minus header height. Each panel scrolls independently via `overflow-y: auto`.
+- Avoids `100vh` (broken on mobile Safari with address bar).
+
+### Overflow prevention
+- Long file paths and rule names: `text-overflow: ellipsis` + `white-space: nowrap` + `overflow: hidden`
+- Horizontal scroll blocked on body: `overflow-x: hidden` on root
+
+### All viewports
+- Setup wizard: single-column, works as-is, max-width constrains on wide screens
+- Analyzing page: centered card, works as-is
+
+## Loading States
+
+- **Results page**: Three-panel skeleton (empty sidebar + empty list + "Select a finding" placeholder) renders immediately. `parseFindings()` runs synchronously on route entry — fast for typical result sizes (<500 findings). For large sets (>200), consider virtualizing the findings list (render visible rows + buffer).
+- **CodeBlock**: highlight.js runs synchronously on render. For files >500 lines, defer highlighting with `requestIdleCallback` and show unhighlighted code first.
+- **Trace toggle on results page**: Inline collapsible section below the header bar (same pattern as current). Toggle button shows/hides.
 
 ## Error Handling
 
