@@ -85,7 +85,11 @@ The `analysis` store parses `annotated_json.results[]` into finding objects:
   dataflowAnalysis: string,// x_fp_analysis.dataflow_analysis
   remediationCode: string|null,
   remediationExplanation: string|null,
+  verdict: string,         // x_fp_analysis.verdict (raw: "true_positive"|"false_positive"|"uncertain")
   status: string,          // x_fp_analysis.status
+  decisionSource: string,  // x_fp_analysis.decision_source ("llm"|"human_override"|"none")
+  appliedMemoryIds: [string], // x_fp_analysis.applied_memory_ids
+  overrideId: string|null, // x_fp_analysis.override_id
   lines: string,           // r.extra.lines (code snippet)
   graphContext: {           // x_fp_analysis.graph_context (nullable)
     enclosing_function: string|null,
@@ -97,12 +101,14 @@ The `analysis` store parses `annotated_json.results[]` into finding objects:
     taint_sanitized: boolean|null,
     taint_path: [string],
     taint_sanitizers: [string],
-    taint_flow: object|null,
+    taint_flow: object|null,   // from enricher taint tracing (may be absent in older results)
   }
 }
 ```
 
 Classification logic: if `confidence < 0.8` → "uncertain", else use `verdict` field.
+
+**Note:** All backend snake_case keys (`x_fp_analysis`, `dataflow_analysis`, etc.) are converted to camelCase during parsing in `parseFindings()`. The `taint_path` strings are plain step descriptions — SOURCE/PROPAGATION/SINK labels are inferred by position (first=source, last=sink, middle=propagation) and sanitizer name matching.
 
 **localStorage persistence:** Only settings (server API key, LLM config, repo URL) are persisted. The uploaded file and analysis results are NOT persisted — they live only in memory signals. Navigating to `#/results` without data redirects to `#/`.
 
