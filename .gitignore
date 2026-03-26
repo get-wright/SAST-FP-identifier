@@ -42,3 +42,7 @@ CLAUDE.md
 .idea/
 .vscode/
 *.swp
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/
