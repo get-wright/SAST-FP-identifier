@@ -6,13 +6,31 @@ import { DataflowView } from "./DataflowView";
 import { EnrichmentView } from "./EnrichmentView";
 import styles from "./DetailPanel.module.css";
 
-const TABS = [
-  { id: "analysis", label: "Analysis" },
-  { id: "code", label: "Code" },
-  { id: "dataflow", label: "Dataflow" },
-  { id: "enrichment", label: "Enrichment" },
-  { id: "remediation", label: "Remediation" },
-];
+function getVisibleTabs(f) {
+  const tabs = [
+    { id: "analysis", label: "Analysis" },
+    { id: "code", label: "Code" },
+  ];
+  // Show Dataflow if LLM flow_steps or taint_path or dataflow_analysis exists
+  const hasDataflow = f.flowSteps?.length > 0 || f.graphContext?.taint_path?.length > 0
+    || f.graphContext?.callers?.length > 0 || f.graphContext?.callees?.length > 0
+    || (f.dataflowAnalysis && f.dataflowAnalysis !== "Not applicable");
+  if (hasDataflow) {
+    tabs.push({ id: "dataflow", label: "Dataflow" });
+  }
+  // Show Enrichment only if there's actual static analysis data
+  const gc = f.graphContext;
+  const hasEnrichment = gc && (gc.enclosing_function || gc.callers?.length > 0
+    || gc.callees?.length > 0 || gc.imports?.length > 0 || gc.taint_reachable != null);
+  if (hasEnrichment) {
+    tabs.push({ id: "enrichment", label: "Enrichment" });
+  }
+  // Show Remediation if there's remediation data
+  if (f.remediationExplanation || f.remediationCode) {
+    tabs.push({ id: "remediation", label: "Remediation" });
+  }
+  return tabs;
+}
 
 const CWE_RE = /CWE-\d+/gi;
 
@@ -45,18 +63,18 @@ function Header({ f }) {
   );
 }
 
-function TabBar({ current, onChange }) {
+function TabBar({ current, onChange, tabs }) {
   const tabsRef = useRef(null);
 
   function handleKeyDown(e) {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     e.preventDefault();
-    const idx = TABS.findIndex((t) => t.id === current);
+    const idx = tabs.findIndex((t) => t.id === current);
     let next;
     if (e.key === "ArrowRight") {
-      next = TABS[(idx + 1) % TABS.length];
+      next = tabs[(idx + 1) % tabs.length];
     } else {
-      next = TABS[(idx - 1 + TABS.length) % TABS.length];
+      next = tabs[(idx - 1 + tabs.length) % tabs.length];
     }
     onChange(next.id);
     // Focus the newly active tab
@@ -66,7 +84,7 @@ function TabBar({ current, onChange }) {
 
   return (
     <div class={styles.tabBar} role="tablist" onKeyDown={handleKeyDown} ref={tabsRef}>
-      {TABS.map((t) => (
+      {tabs.map((t) => (
         <button
           key={t.id}
           class={`${styles.tab} ${current === t.id ? styles.tabActive : ""}`}
@@ -173,23 +191,27 @@ export function DetailPanel() {
     );
   }
 
+  const visibleTabs = getVisibleTabs(f);
+  // If current tab is hidden for this finding, fall back to "analysis"
+  const effectiveTab = visibleTabs.some((t) => t.id === tab) ? tab : "analysis";
+
   return (
     <div class={styles.panel}>
       <Header f={f} />
-      <TabBar current={tab} onChange={(id) => (activeTab.value = id)} />
-      {tab === "analysis" && <AnalysisTab f={f} />}
-      {tab === "code" && <CodeTab f={f} />}
-      {tab === "dataflow" && (
+      <TabBar current={effectiveTab} onChange={(id) => (activeTab.value = id)} tabs={visibleTabs} />
+      {effectiveTab === "analysis" && <AnalysisTab f={f} />}
+      {effectiveTab === "code" && <CodeTab f={f} />}
+      {effectiveTab === "dataflow" && (
         <div class={styles.tabContent} role="tabpanel" aria-label="Dataflow">
           <DataflowView finding={f} />
         </div>
       )}
-      {tab === "enrichment" && (
+      {effectiveTab === "enrichment" && (
         <div class={styles.tabContent} role="tabpanel" aria-label="Enrichment">
           <EnrichmentView finding={f} />
         </div>
       )}
-      {tab === "remediation" && <RemediationTab f={f} />}
+      {effectiveTab === "remediation" && <RemediationTab f={f} />}
     </div>
   );
 }
