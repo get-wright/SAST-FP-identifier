@@ -28,7 +28,7 @@
 
 .iconProgress {
   color: var(--accent);
-  animation: spin 1s linear infinite;
+  display: inline-block;
 }
 
 .iconCompleted {
@@ -66,8 +66,12 @@
   flex-shrink: 0;
 }
 
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 @media (prefers-reduced-motion: no-preference) {
-  @keyframes spin {
-    to { transform: rotate(360deg); }
+  .iconProgress {
+    animation: spin 1s linear infinite;
   }
 }

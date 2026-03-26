@@ -27,7 +27,21 @@ export function Analyzing() {
   }
 
   function handleTrace(event) {
-    const collected = [...events.value, event];
+    // Replace in_progress entry for same step with completed/error/skipped, or append new
+    let collected;
+    if (event.status !== "in_progress") {
+      const existing = events.value.findIndex(
+        (e) => e.step === event.step && e.status === "in_progress" && e.detail === event.detail
+      );
+      if (existing >= 0) {
+        collected = [...events.value];
+        collected[existing] = event;
+      } else {
+        collected = [...events.value, event];
+      }
+    } else {
+      collected = [...events.value, event];
+    }
     events.value = collected;
 
     // Update file group count
