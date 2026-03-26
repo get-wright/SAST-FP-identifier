@@ -6,6 +6,7 @@ import { repoName, commitSha } from "../lib/utils";
 import { ProgressTrace } from "../components/ProgressTrace";
 import { FilterSidebar } from "../components/FilterSidebar";
 import { FindingsList } from "../components/FindingsList";
+import { DetailPanel } from "../components/DetailPanel";
 import styles from "./Results.module.css";
 
 function FrameworkBadge({ sbomProfile }) {
@@ -175,7 +176,7 @@ export function Results() {
           <FindingsList />
         </div>
         <div class={styles.detailPanel}>
-          <div class={styles.placeholder}>Detail panel (Task 8)</div>
+          <DetailPanel />
         </div>
       </div>
     </div>
