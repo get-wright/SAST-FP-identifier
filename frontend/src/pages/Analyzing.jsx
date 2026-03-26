@@ -4,7 +4,7 @@ import { route } from "preact-router";
 import { llmConfig } from "../stores/settings";
 import { rawResult, repoUrl, traceEvents } from "../stores/analysis";
 import { analyzeStream, buildLLMOverride } from "../lib/api";
-import { ProgressTrace } from "../components/ProgressTrace";
+import { ProgressTrace, STEP_LABELS } from "../components/ProgressTrace";
 import styles from "./Analyzing.module.css";
 
 const SETUP_STEPS = 7;
@@ -68,19 +68,6 @@ export function Analyzing() {
     recalcProgress(collected);
 
     if (event.status === "in_progress") {
-      const STEP_LABELS = {
-        repo_clone: "Clone repository",
-        gkg_check: "Check graph tools",
-        gkg_index: "Index call graph",
-        gkg_server: "Start graph server",
-        repo_map: "Fetch repo map",
-        joern_check: "Check Joern CPG",
-        joern_cpg: "Generate code graph",
-        enrich: "Enrich findings",
-        llm_call: "LLM analysis",
-        parse_results: "Parse results",
-        sbom_generate: "Analyze dependencies",
-      };
       const label = STEP_LABELS[event.step] || event.step;
       currentLabel.value = event.detail ? `${label} — ${event.detail}` : label;
     }
@@ -114,6 +101,7 @@ export function Analyzing() {
       return;
     }
 
+    const controller = new AbortController();
     const gitToken = sessionStorage.getItem("git_token_pending") || "";
     const llmOverride = buildLLMOverride(llmConfig.value);
 
@@ -127,8 +115,11 @@ export function Analyzing() {
         onTrace: handleTrace,
         gitToken,
         llmOverride,
+        signal: controller.signal,
       }
     );
+
+    return () => controller.abort();
   }, []);
 
   const isError = errorMsg.value !== null;

@@ -1,5 +1,5 @@
 // baseUrl defaults to "" (same-origin, since backend serves the frontend).
-export async function analyzeStream(repoUrl, semgrepJson, { onProgress, onResult, onError, onTrace, gitToken, llmOverride, baseUrl = "" }) {
+export async function analyzeStream(repoUrl, semgrepJson, { onProgress, onResult, onError, onTrace, gitToken, llmOverride, baseUrl = "", signal }) {
   const body = { repo_url: repoUrl, semgrep_json: semgrepJson };
   if (gitToken) body.git_token = gitToken;
   if (llmOverride) body.llm_override = llmOverride;
@@ -10,8 +10,10 @@ export async function analyzeStream(repoUrl, semgrepJson, { onProgress, onResult
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal,
     });
   } catch (err) {
+    if (err.name === "AbortError") return;
     onError(`Network error: ${err.message}`);
     return;
   }
@@ -46,6 +48,7 @@ export async function analyzeStream(repoUrl, semgrepJson, { onProgress, onResult
       }
     }
   } catch (err) {
+    if (err.name === "AbortError") return;
     onError(`Stream error: ${err.message}`);
   }
 }

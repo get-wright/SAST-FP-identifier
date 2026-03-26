@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { route } from "preact-router";
-import { rawResult, repoUrl, traceEvents, counts, resetAnalysis } from "../stores/analysis";
+import { rawResult, repoUrl, traceEvents, counts, resetAnalysis, selectedFinding, selectedFingerprint } from "../stores/analysis";
 import { repoName, commitSha } from "../lib/utils";
 import { ProgressTrace } from "../components/ProgressTrace";
 import { FilterSidebar } from "../components/FilterSidebar";
@@ -168,14 +168,16 @@ export function Results() {
       <div class={styles.panels}>
         <aside
           class={`${styles.filterPanel} ${mobileFilterOpen.value ? styles.filterPanelOpen : ""}`}
-          aria-hidden={!mobileFilterOpen.value}
         >
           <FilterSidebar />
         </aside>
         <div class={styles.findingsPanel}>
           <FindingsList />
         </div>
-        <div class={styles.detailPanel}>
+        <div class={`${styles.detailPanel} ${selectedFinding.value ? styles.detailPanelOpen : ""}`}>
+          <button class={styles.mobileBack} onClick={() => selectedFingerprint.value = null}>
+            &larr; Back to findings
+          </button>
           <DetailPanel />
         </div>
       </div>

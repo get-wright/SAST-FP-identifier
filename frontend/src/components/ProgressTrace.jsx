@@ -1,6 +1,6 @@
 import styles from "./ProgressTrace.module.css";
 
-const STEP_LABELS = {
+export const STEP_LABELS = {
   repo_clone: "Clone repository",
   gkg_check: "Check graph tools",
   gkg_index: "Index call graph",
