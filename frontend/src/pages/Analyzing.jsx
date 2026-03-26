@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { route } from "preact-router";
-import { serverApiKey, serverKeyError, llmConfig } from "../stores/settings";
+import { llmConfig } from "../stores/settings";
 import { rawResult, repoUrl, traceEvents } from "../stores/analysis";
 import { analyzeStream, buildLLMOverride } from "../lib/api";
 import { ProgressTrace } from "../components/ProgressTrace";
@@ -95,11 +95,6 @@ export function Analyzing() {
   }
 
   function handleError(msg) {
-    if (msg === "__401__") {
-      serverKeyError.value = true;
-      route("/");
-      return;
-    }
     errorMsg.value = msg;
     progressPct.value = 0;
   }
@@ -123,7 +118,6 @@ export function Analyzing() {
     const llmOverride = buildLLMOverride(llmConfig.value);
 
     analyzeStream(
-      serverApiKey.value,
       repoUrl.value,
       semgrepJson,
       {

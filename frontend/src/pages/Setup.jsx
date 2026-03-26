@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { route } from "preact-router";
-import { serverApiKey, serverKeyError } from "../stores/settings";
 import { repoUrl as analysisRepoUrl } from "../stores/analysis";
 import { StepUpload } from "../components/SetupWizard/StepUpload";
 import { StepRepo } from "../components/SetupWizard/StepRepo";
@@ -34,9 +33,6 @@ export function Setup() {
   // Step 2 state
   const [repoUrl, setRepoUrl] = useState("");
   const [gitToken, setGitToken] = useState("");
-
-  // Server API key banner
-  const [apiKeyInput, setApiKeyInput] = useState(serverApiKey.value);
 
   // Focus management — one ref per step
   const step0Ref = useRef(null);
@@ -85,13 +81,6 @@ export function Setup() {
     route("/analyzing");
   }
 
-  function saveServerApiKey() {
-    serverApiKey.value = apiKeyInput.trim();
-    serverKeyError.value = false;
-  }
-
-  const showKeyBanner = !serverApiKey.value || serverKeyError.value;
-
   return (
     <div class={styles.page}>
       {/* Header */}
@@ -108,31 +97,6 @@ export function Setup() {
 
       <div class={styles.content}>
         {/* Server API key banner */}
-        {showKeyBanner && (
-          <div class={`${styles.banner} ${serverKeyError.value ? styles.bannerError : ""}`} role="banner">
-            <span class={styles.bannerLabel}>
-              {serverKeyError.value ? "Invalid API key — re-enter:" : "Server API Key required:"}
-            </span>
-            <input
-              type="password"
-              class={`${styles.bannerInput} ${serverKeyError.value ? styles.bannerInputError : ""}`}
-              placeholder="Enter server API key"
-              value={apiKeyInput}
-              onInput={(e) => setApiKeyInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && saveServerApiKey()}
-              aria-label="Server API key"
-              autocomplete="current-password"
-            />
-            <button
-              class={styles.bannerSave}
-              onClick={saveServerApiKey}
-              disabled={!apiKeyInput.trim()}
-            >
-              Save
-            </button>
-          </div>
-        )}
-
         {/* Stepper */}
         <nav class={styles.stepper} aria-label="Wizard steps">
           {STEPS.map((label, i) => (

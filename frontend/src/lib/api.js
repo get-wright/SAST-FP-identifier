@@ -1,5 +1,5 @@
 // baseUrl defaults to "" (same-origin, since backend serves the frontend).
-export async function analyzeStream(apiKey, repoUrl, semgrepJson, { onProgress, onResult, onError, onTrace, gitToken, llmOverride, baseUrl = "" }) {
+export async function analyzeStream(repoUrl, semgrepJson, { onProgress, onResult, onError, onTrace, gitToken, llmOverride, baseUrl = "" }) {
   const body = { repo_url: repoUrl, semgrep_json: semgrepJson };
   if (gitToken) body.git_token = gitToken;
   if (llmOverride) body.llm_override = llmOverride;
@@ -8,7 +8,7 @@ export async function analyzeStream(apiKey, repoUrl, semgrepJson, { onProgress, 
   try {
     response = await fetch(`${baseUrl}/analyze/stream`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
   } catch (err) {
@@ -16,10 +16,6 @@ export async function analyzeStream(apiKey, repoUrl, semgrepJson, { onProgress, 
     return;
   }
 
-  if (response.status === 401) {
-    onError("__401__");
-    return;
-  }
   if (!response.ok) {
     const text = await response.text();
     onError(`Server error (${response.status}): ${text}`);
