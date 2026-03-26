@@ -2,6 +2,8 @@ import { useEffect, useRef } from "preact/hooks";
 import { selectedFinding, activeTab } from "../stores/analysis";
 import { classColor, classLabel, fmtConfidence } from "../lib/utils";
 import { CodeBlock, detectLang } from "./CodeBlock";
+import { DataflowView } from "./DataflowView";
+import { EnrichmentView } from "./EnrichmentView";
 import styles from "./DetailPanel.module.css";
 
 const TABS = [
@@ -179,12 +181,12 @@ export function DetailPanel() {
       {tab === "code" && <CodeTab f={f} />}
       {tab === "dataflow" && (
         <div class={styles.tabContent} role="tabpanel" aria-label="Dataflow">
-          <div class={styles.placeholder}>Dataflow view (Task 9)</div>
+          <DataflowView finding={f} />
         </div>
       )}
       {tab === "enrichment" && (
         <div class={styles.tabContent} role="tabpanel" aria-label="Enrichment">
-          <div class={styles.placeholder}>Enrichment view (Task 9)</div>
+          <EnrichmentView finding={f} />
         </div>
       )}
       {tab === "remediation" && <RemediationTab f={f} />}
