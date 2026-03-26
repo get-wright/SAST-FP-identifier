@@ -1,6 +1,6 @@
 import Router from "preact-router";
+import { Setup } from "./pages/Setup";
 
-function Setup() { return <main><h1>Setup</h1></main>; }
 function Analyzing() { return <main><h1>Analyzing...</h1></main>; }
 function Results() { return <main><h1>Results</h1></main>; }
 

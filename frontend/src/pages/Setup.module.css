@@ -1,0 +1,269 @@
+.page {
+  min-height: 100dvh;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  height: 52px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.appTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+
+.themeBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 18px;
+  outline: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .themeBtn:hover {
+    border-color: var(--border);
+    color: var(--text);
+  }
+}
+
+.themeBtn:focus-visible {
+  border-color: var(--accent);
+}
+
+.themeIcon {
+  line-height: 1;
+}
+
+.content {
+  flex: 1;
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 24px 16px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Server key banner */
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 8px;
+  flex-wrap: wrap;
+}
+
+.bannerError {
+  background: color-mix(in srgb, var(--danger) 8%, var(--panel));
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+}
+
+.bannerLabel {
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.bannerInput {
+  flex: 1;
+  min-width: 160px;
+  height: 36px;
+  padding: 0 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+
+.bannerInput:focus-visible {
+  border-color: var(--accent);
+}
+
+.bannerInputError {
+  border-color: var(--danger);
+}
+
+.bannerSave {
+  height: 36px;
+  padding: 0 14px;
+  background: var(--accent);
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.bannerSave:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Stepper */
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.stepItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  padding: 10px 0;
+  position: relative;
+}
+
+.stepItem:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 50%;
+  width: calc(100% - 140px);
+  height: 1px;
+  background: var(--border);
+  transform: translateX(100%);
+  pointer-events: none;
+}
+
+.stepNum {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.stepLabel {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.stepActive .stepNum {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.stepActive .stepLabel {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.stepDone .stepNum {
+  background: color-mix(in srgb, var(--accent) 20%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  color: var(--accent);
+}
+
+/* Card */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px;
+}
+
+/* Footer */
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.footerLeft,
+.footerRight {
+  display: flex;
+  gap: 8px;
+}
+
+.btnPrimary {
+  height: 44px;
+  padding: 0 20px;
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  outline: none;
+}
+
+.btnPrimary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btnPrimary:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.btnSecondary {
+  height: 44px;
+  padding: 0 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text);
+  outline: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .btnSecondary:hover {
+    border-color: var(--accent);
+  }
+}
+
+.btnSecondary:focus-visible {
+  border-color: var(--accent);
+}
+
+@media (max-width: 480px) {
+  .content {
+    padding: 16px 12px 32px;
+  }
+
+  .card {
+    padding: 16px;
+  }
+
+  .stepLabel {
+    display: none;
+  }
+}
