@@ -91,6 +91,8 @@ class Enricher:
                             callee_name=callee,
                             gkg_client=self._gkg,
                             repo_path=self._repo_path,
+                            caller_file=file_path,
+                            caller_line=line,
                         )
                         hops.append(CrossFileHop(
                             callee=callee,
