@@ -13,6 +13,21 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+
+def _strip_list_wrapper(s: str) -> str:
+    """Strip outer List(...) wrapper using bracket-depth matching."""
+    if not s.startswith("List("):
+        return s
+    depth = 0
+    for i, c in enumerate(s):
+        if c == '(':
+            depth += 1
+        elif c == ')':
+            depth -= 1
+            if depth == 0:
+                return s[5:i].strip()
+    return s[5:].strip()  # unbalanced — best effort
+
 # Strip ANSI escape codes from Joern's colored terminal output
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -322,26 +337,33 @@ class JoernClient:
         if not result_line or re.match(r"List\(\s*\)", result_line):
             return TaintResult()
 
-        # Strip outer List(...) wrapper
-        inner = result_line
-        if inner.startswith("List(") and inner.endswith(")"):
-            inner = inner[5:-1].strip()
-
+        # Strip outer List(...) wrapper with proper bracket matching
+        inner = _strip_list_wrapper(result_line)
         if not inner:
             return TaintResult()
 
-        # Split top-level comma-separated flow strings (crude but sufficient —
-        # Joern flow elements use " -> " not ", " as separator)
         flow_strings: list[str] = [s.strip().strip('"') for s in inner.split('", "')]
         if not flow_strings or flow_strings == [""]:
             return TaintResult()
 
-        # Flatten all path elements across all flows
+        # Flatten path elements, validating format
         path_elements: list[str] = []
         for flow in flow_strings:
-            path_elements.extend(elem.strip() for elem in flow.split(" -> "))
+            for elem in flow.split(" -> "):
+                elem = elem.strip()
+                parts = elem.split(":", 2)
+                if len(parts) < 2:
+                    continue
+                try:
+                    int(parts[1])
+                except ValueError:
+                    continue
+                path_elements.append(elem)
 
-        # Check for sanitizers anywhere in the path
+        if not path_elements:
+            return TaintResult()
+
+        # Detect sanitizers
         found_sanitizers: list[str] = []
         for elem in path_elements:
             elem_lower = elem.lower()
