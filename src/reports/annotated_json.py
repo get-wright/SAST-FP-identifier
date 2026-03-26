@@ -120,4 +120,6 @@ def _find_graph_context(
         gc["taint_sanitized"] = ctx.taint_sanitized
         gc["taint_path"] = ctx.taint_path
         gc["taint_sanitizers"] = ctx.taint_sanitizers
+    if ctx.taint_flow:
+        gc["taint_flow"] = ctx.taint_flow.to_dict()
     return gc
