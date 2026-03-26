@@ -69,8 +69,8 @@ async def resolve_cross_file(
                     gkg_client.get_definition(caller_file, caller_line, callee_name),
                     timeout=_TIMEOUT_PER_RESOLUTION,
                 )
-            except Exception:
-                pass  # Fall through to search_definitions
+            except Exception as exc:
+                logger.debug("get_definition failed for %s: %s", callee_name, exc)
 
         # Fall back to search
         if not defn or not isinstance(defn, dict) or not defn.get("file", defn.get("file_path", "")):

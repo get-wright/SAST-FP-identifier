@@ -372,7 +372,7 @@ def test_taint_flow_boosts_evidence_score():
     assert score >= 0.80
 
 
-async def test_grounded_steps_merged_into_verdicts(orchestrator, tmp_path):
+def test_grounded_steps_merged_into_verdicts():
     """Verify grounded flow steps from TaintFlow merge with LLM annotations."""
     from src.models.analysis import FindingContext, TaintFlow, FlowStep as AnalysisFlowStep
     from src.core.orchestrator import _merge_grounded_and_llm
@@ -410,7 +410,7 @@ async def test_grounded_steps_merged_into_verdicts(orchestrator, tmp_path):
     assert merged[2]["explanation"] == "Unsanitized input reaches SQL execution"
 
 
-async def test_merge_with_gap_steps():
+def test_merge_with_gap_steps():
     from src.core.orchestrator import _merge_grounded_and_llm
 
     grounded = [
@@ -431,7 +431,7 @@ async def test_merge_with_gap_steps():
     assert merged[2]["grounded"] is True
 
 
-async def test_merge_empty_grounded_returns_empty():
+def test_merge_empty_grounded_returns_empty():
     from src.core.orchestrator import _merge_grounded_and_llm
 
     merged = _merge_grounded_and_llm([], {"step_annotations": [], "gap_steps": []})
