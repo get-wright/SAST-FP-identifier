@@ -142,11 +142,61 @@ function CallerFlow({ finding }) {
   );
 }
 
+const ROLE_COLORS = {
+  source: "var(--success)",
+  propagation: "var(--warning)",
+  sanitizer: "#3b82f6",
+  sink: "var(--danger)",
+};
+
+function LLMFlowSteps({ steps, dataflowAnalysis }) {
+  return (
+    <div>
+      <div class={styles.timeline}>
+        {steps.map((step, i) => {
+          const isLast = i === steps.length - 1;
+          const color = ROLE_COLORS[step.label] || "var(--text-tertiary)";
+          return (
+            <div key={i} class={styles.step}>
+              <div class={styles.stepLeft}>
+                <div class={styles.dot} style={{ background: color }} />
+                {!isLast && <div class={styles.connector} />}
+              </div>
+              <div class={styles.stepBody}>
+                <div class={styles.stepHeader}>
+                  <span class={styles.stepLabel} style={{ color }}>{step.label.toUpperCase()}</span>
+                  {step.location && (
+                    <span class={styles.stepLocation}>{step.location}</span>
+                  )}
+                </div>
+                {step.code && (
+                  <code class={styles.stepCode}>{step.code}</code>
+                )}
+                {step.explanation && (
+                  <span class={styles.stepExplanation}>{step.explanation}</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {dataflowAnalysis && (
+        <p class={styles.analysis}>{dataflowAnalysis}</p>
+      )}
+    </div>
+  );
+}
+
 export function DataflowView({ finding }) {
   const gc = finding.graphContext;
+  const hasLLMSteps = finding.flowSteps?.length > 0;
   const hasTaint = gc?.taint_path?.length > 0;
   const hasCallers = (gc?.callers?.length > 0) || (gc?.callees?.length > 0);
 
+  // Priority: LLM structured steps > enrichment taint path > caller flow > text only
+  if (hasLLMSteps) {
+    return <LLMFlowSteps steps={finding.flowSteps} dataflowAnalysis={finding.dataflowAnalysis} />;
+  }
   if (hasTaint) {
     return <TaintFlow finding={finding} />;
   }

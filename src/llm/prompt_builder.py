@@ -17,6 +17,7 @@ For each finding, consider internally:
 Then produce:
 - "reasoning": A natural paragraph of 3-5 sentences explaining WHY this finding is or is not a real vulnerability. Write as a security reviewer explaining to a colleague. Cite specific code patterns. Do not use section headers or labels like "SOURCE:" — just explain clearly.
 - "dataflow_analysis": A separate paragraph describing HOW data flows through the code. Trace from where data enters (parameter, request, external source) through transformations to the flagged operation. If a TRACED DATA FLOW section is in the evidence, narrate that trace in plain language. If no trace is available, describe what you can infer from the function body. If the finding is not about data flow (e.g., config issue), write "Not applicable — this finding is about configuration, not data flow."
+- "flow_steps": An array of structured steps tracing data from source to sink. Each step has: label ("source", "propagation", "sanitizer", or "sink"), location (file:line), code (the expression), and explanation (what happens). Include at least a source and sink step for dataflow findings. For config findings (no data flow), return an empty array [].
 
 CRITICAL: Optimize for NOT missing true vulnerabilities. Use "uncertain" when the available evidence is insufficient.
 
@@ -34,6 +35,8 @@ CONFIDENCE: 0.0 (guessing) to 1.0 (certain).
 SYSTEM_PROMPT_DATAFLOW = """You are a security engineer analyzing code dataflow. For each finding, trace how data moves through the code.
 
 Describe how data enters the code (function parameter, HTTP request, file read, etc.), what transformations it undergoes (string operations, function calls, assignments), and where it arrives at the flagged operation. Narrate the path step by step in plain language. If a TRACED DATA FLOW section is provided, use it as your guide and narrate it. If the finding is not about data flow, write "Not applicable — this finding is about configuration, not data flow."
+
+Also return "flow_steps": an array of structured steps tracing data from source to sink. Each step has label ("source", "propagation", "sanitizer", or "sink"), location (file:line), code (the expression), explanation (what happens at this step). Include at least source and sink for dataflow findings. For config/non-dataflow findings, return an empty array.
 
 Set flow_complete to true if you can trace the full path from source to sink. Set to false if there are gaps (cross-file calls, dynamic dispatch, missing caller context). List the gaps.
 

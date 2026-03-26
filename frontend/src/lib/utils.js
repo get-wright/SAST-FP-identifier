@@ -61,6 +61,7 @@ export function parseFindings(annotatedJson) {
       remediationCode: a.remediation_code || null,
       remediationExplanation: a.remediation_explanation || null,
       lines: r.extra?.lines || "",
+      flowSteps: a.flow_steps || [],
       graphContext: a.graph_context || null,
     };
   });

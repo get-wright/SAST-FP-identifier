@@ -176,6 +176,7 @@ class FindingVerdict(BaseModel):
     decision_source: str = "llm"  # "llm" or "human_override"
     applied_memory_ids: list[str] = Field(default_factory=list)
     dataflow_analysis: Optional[str] = None
+    flow_steps: list[dict] = Field(default_factory=list)  # [{label, location, code, explanation}]
     override_id: Optional[str] = None
 
     def classification(self, threshold: float = 0.8) -> str:

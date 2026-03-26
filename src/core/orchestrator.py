@@ -763,6 +763,7 @@ class Orchestrator:
                 d = v.model_dump()
                 df_match = summaries.get(v.finding_index, {})
                 d["dataflow_analysis"] = df_match.get("dataflow_analysis", "")
+                d["flow_steps"] = df_match.get("flow_steps", [])
                 parsed.append(d)
 
         return self._map_verdicts(parsed, findings, finding_memories, index_offset)
@@ -789,13 +790,15 @@ class Orchestrator:
                         verdict = "false_positive" if matched["is_false_positive"] else "true_positive"
                     else:
                         verdict = "uncertain"
+                raw_conf = matched.get("confidence", 0.0)
                 verdicts.append(FindingVerdict(
                     finding_index=global_index,
                     fingerprint=finding.fingerprint,
                     verdict=verdict,
-                    confidence=matched.get("confidence", 0.0),
+                    confidence=max(0.0, min(1.0, raw_conf)),
                     reasoning=matched.get("reasoning", ""),
                     dataflow_analysis=matched.get("dataflow_analysis", ""),
+                    flow_steps=matched.get("flow_steps", []),
                     remediation_code=matched.get("remediation_code"),
                     remediation_explanation=matched.get("remediation_explanation"),
                     applied_memory_ids=[m.id for m in finding_memories.get(i, [])],
