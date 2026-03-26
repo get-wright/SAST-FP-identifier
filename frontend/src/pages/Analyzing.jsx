@@ -27,12 +27,22 @@ export function Analyzing() {
   }
 
   function handleTrace(event) {
-    // Replace in_progress entry for same step with completed/error/skipped, or append new
+    // Replace the last in_progress entry for the same step, or append new.
+    // Detail text differs between in_progress ("cloning repository") and completed ("cloned"),
+    // so we match on step name only. For per-file steps (enrich, llm_call, parse_results),
+    // extract the file prefix from detail to match correctly.
     let collected;
     if (event.status !== "in_progress") {
-      const existing = events.value.findIndex(
-        (e) => e.step === event.step && e.status === "in_progress" && e.detail === event.detail
-      );
+      const eventFile = (event.detail || "").split(":")[0].trim();
+      const isPerFile = ["enrich", "llm_call", "parse_results"].includes(event.step);
+      const existing = events.value.findIndex((e) => {
+        if (e.step !== event.step || e.status !== "in_progress") return false;
+        if (isPerFile) {
+          const eFile = (e.detail || "").split(":")[0].trim();
+          return eFile === eventFile;
+        }
+        return true;
+      });
       if (existing >= 0) {
         collected = [...events.value];
         collected[existing] = event;
