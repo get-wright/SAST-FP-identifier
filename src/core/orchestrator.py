@@ -659,10 +659,19 @@ class Orchestrator:
         findings_text, finding_memories = self._prepare_batch(findings, repo_url, profile)
 
         if self._prompt_strategy == "two_stage":
-            return await self._analyze_batch_two_stage(
-                findings, findings_text, contexts, llm, profile, repo_map, repo_url,
-                finding_memories, index_offset,
+            # Skip Stage 1 (dataflow) if no finding has meaningful enrichment context.
+            # Saves an entire LLM call for config findings (Dockerfile, HTML templates, etc.)
+            has_enrichment = any(
+                ctx.enclosing_function or ctx.callers or ctx.callees or ctx.taint_flow
+                for ctx in contexts.values()
             )
+            if not has_enrichment:
+                logger.info("Skipping Stage 1 — no enrichment context for %s", findings[0].path)
+            else:
+                return await self._analyze_batch_two_stage(
+                    findings, findings_text, contexts, llm, profile, repo_map, repo_url,
+                    finding_memories, index_offset,
+                )
 
         # Single-pass path
         prompt = build_grouped_prompt(

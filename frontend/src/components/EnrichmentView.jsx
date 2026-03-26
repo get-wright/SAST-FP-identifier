@@ -141,7 +141,12 @@ export function EnrichmentView({ finding }) {
   const gc = finding.graphContext;
 
   if (!gc) {
-    return <p class={styles.empty}>No enrichment data available.</p>;
+    return <p class={styles.empty}>No enrichment data found for this finding.</p>;
+  }
+
+  const hasAny = gc.enclosing_function || gc.callers?.length || gc.callees?.length || gc.imports?.length || gc.taint_reachable != null;
+  if (!hasAny) {
+    return <p class={styles.empty}>No enrichment data found for this finding. This is typically a configuration or static analysis issue without traceable code structure.</p>;
   }
 
   const sourceText = sourceBadgeText(gc.source);

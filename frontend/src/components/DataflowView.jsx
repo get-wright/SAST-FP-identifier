@@ -206,8 +206,12 @@ export function DataflowView({ finding }) {
   if (hasCallers) {
     return <CallerFlow finding={finding} />;
   }
-  if (finding.dataflowAnalysis) {
+  if (finding.dataflowAnalysis && finding.dataflowAnalysis !== "Not applicable") {
     return <p class={styles.analysis}>{finding.dataflowAnalysis}</p>;
   }
-  return <p class={styles.empty}>No data flow information available.</p>;
+  return (
+    <p class={styles.empty}>
+      No dataflow data found for this finding. This is typically a configuration or static analysis issue without traceable data movement.
+    </p>
+  );
 }
