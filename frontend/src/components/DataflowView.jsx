@@ -101,36 +101,39 @@ function CallerFlow({ finding }) {
   const callees = gc?.callees || [];
   const enclosing = gc?.enclosing_function || "unknown";
 
-  const callerLabel = callers.length > 0
-    ? callers[0].function + (callers.length > 1 ? ` +${callers.length - 1} more` : "")
-    : null;
-
-  const calleesLabel = callees.length > 0
-    ? truncate(callees.join(", "), 60)
-    : null;
-
   return (
     <div>
       <div class={styles.callerFlow}>
-        {callerLabel && (
+        {callers.length > 0 && (
           <>
             <div class={`${styles.flowNode} ${styles.nodeBlue}`}>
               <span class={styles.nodeRole}>CALLER</span>
-              <span class={styles.nodeText}>{callerLabel}</span>
+              <span class={styles.nodeText}>{callers[0].function}()</span>
+              <span class={styles.nodeLocation}>{callers[0].file}:{callers[0].line}</span>
+              {callers[0].context && (
+                <code class={styles.nodeCode}>{callers[0].context.trim().split("\n").slice(0, 3).join("\n")}</code>
+              )}
+              {callers.length > 1 && (
+                <span class={styles.nodeMore}>+{callers.length - 1} more callers</span>
+              )}
             </div>
             <div class={styles.arrow}>&#x2193;</div>
           </>
         )}
         <div class={`${styles.flowNode} ${styles.nodeRed}`}>
           <span class={styles.nodeRole}>FINDING</span>
-          <span class={styles.nodeText}>{enclosing}</span>
+          <span class={styles.nodeText}>{enclosing}()</span>
+          <span class={styles.nodeLocation}>{finding.path}:{finding.line}</span>
+          {finding.lines && (
+            <code class={styles.nodeCode}>{finding.lines.trim().split("\n").slice(0, 3).join("\n")}</code>
+          )}
         </div>
-        {calleesLabel && (
+        {callees.length > 0 && (
           <>
             <div class={styles.arrow}>&#x2193;</div>
             <div class={`${styles.flowNode} ${styles.nodeGray}`}>
               <span class={styles.nodeRole}>CALLEES</span>
-              <span class={styles.nodeText}>{calleesLabel}</span>
+              <span class={styles.nodeText}>{truncate(callees.map(c => c + "()").join(", "), 80)}</span>
             </div>
           </>
         )}
