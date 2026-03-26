@@ -96,23 +96,35 @@ def _inject_cross_file_hops(steps: list[dict], hops) -> list[dict]:
 
 
 def _from_joern(joern_path: list[str]) -> list[dict]:
-    """Parse Joern 'file:line:code' strings into flow steps."""
+    """Parse Joern 'file:line:code' strings into flow steps.
+
+    Joern path elements are typically 'file:line:code' but may also be
+    short labels or incomplete entries. Malformed entries are skipped.
+    """
     results: list[dict] = []
-    for i, entry in enumerate(joern_path):
-        file_part, line_str, code = entry.split(":", 2)
-        if i == 0:
-            label = "source"
-        elif i == len(joern_path) - 1 and len(joern_path) > 1:
-            label = "sink"
-        else:
-            label = "propagation"
+    for entry in joern_path:
+        parts = entry.split(":", 2)
+        if len(parts) < 2:
+            continue  # Skip malformed entries (no file:line)
+        file_part = parts[0]
+        line_str = parts[1]
+        code = parts[2] if len(parts) > 2 else ""
+        try:
+            int(line_str)
+        except ValueError:
+            continue  # Skip entries where line is not a number
         results.append({
-            "label": label,
+            "label": "propagation",  # assigned below
             "location": f"{file_part}:{line_str}",
             "code": code,
             "explanation": "",
             "grounded": True,
         })
+    # Assign source/sink labels
+    if results:
+        results[0]["label"] = "source"
+        if len(results) > 1:
+            results[-1]["label"] = "sink"
     return results
 
 

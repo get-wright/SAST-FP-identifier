@@ -149,6 +149,26 @@ def test_tree_sitter_takes_priority_over_joern():
     assert result[1]["code"] == "eval(x)"
 
 
+def test_joern_skips_malformed_entries():
+    joern_path = [
+        "app.py:5:x = input()",
+        "some_label_without_colons",
+        "not_a_line:abc:code",
+        "app.py:10:eval(x)",
+    ]
+    result = ground_flow_steps(None, "app.py", joern_taint_path=joern_path)
+    assert len(result) == 2
+    assert result[0]["label"] == "source"
+    assert result[0]["location"] == "app.py:5"
+    assert result[1]["label"] == "sink"
+    assert result[1]["location"] == "app.py:10"
+
+
+def test_joern_all_malformed_returns_empty():
+    result = ground_flow_steps(None, "app.py", joern_taint_path=["bad", "also_bad"])
+    assert result == []
+
+
 def test_extract_line():
     assert _extract_line("app.py:42") == 42
     assert _extract_line("src/utils.py:100") == 100

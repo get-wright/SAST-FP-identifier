@@ -434,7 +434,7 @@ class Orchestrator:
 
         for gr in group_results:
             if isinstance(gr, Exception):
-                logger.error("File group failed: %s", gr)
+                logger.error("File group failed: %s", gr, exc_info=gr)
                 continue
             result.file_groups.append(gr)
 
