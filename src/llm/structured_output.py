@@ -67,4 +67,24 @@ async def invoke_structured(
     text = response.content if hasattr(response, "content") else str(response)
     json_str = _extract_json_from_text(text)
     parsed = json.loads(json_str)
+
+    # Try direct validation first
+    try:
+        return schema.model_validate(parsed)
+    except Exception:
+        pass
+
+    # LLM may return an unwrapped single object or array instead of the batch wrapper.
+    # Try to auto-wrap: find which field in the schema is a list and wrap the parsed data.
+    for field_name, field_info in schema.model_fields.items():
+        annotation = field_info.annotation
+        # Check if this field is list[SomeModel]
+        origin = getattr(annotation, "__origin__", None)
+        if origin is list:
+            if isinstance(parsed, list):
+                return schema.model_validate({field_name: parsed})
+            elif isinstance(parsed, dict):
+                return schema.model_validate({field_name: [parsed]})
+
+    # If nothing worked, raise with the original parsed data for debugging
     return schema.model_validate(parsed)
