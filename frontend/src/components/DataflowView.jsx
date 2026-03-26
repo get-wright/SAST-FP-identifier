@@ -153,9 +153,8 @@ export function DataflowView({ finding }) {
   if (hasCallers) {
     return <CallerFlow finding={finding} />;
   }
-  return (
-    <p class={styles.empty}>
-      {finding.dataflowAnalysis || "No data flow information available."}
-    </p>
-  );
+  if (finding.dataflowAnalysis) {
+    return <p class={styles.analysis}>{finding.dataflowAnalysis}</p>;
+  }
+  return <p class={styles.empty}>No data flow information available.</p>;
 }
