@@ -13,6 +13,7 @@ from langsmith import traceable
 
 from src.core.cache import ResultCache
 from src.core.enricher import Enricher
+from src.core.flow_grounding import ground_flow_steps
 from src.core.triage_memory import TriageMemoryStore
 from src.graph.joern_manager import JoernManager
 from src.graph.manager import GraphManager
@@ -173,6 +174,31 @@ def _rule_adjustment(finding, profile: RepoProfile) -> float:
         return 0.90
 
     return 1.0
+
+
+def _merge_grounded_and_llm(grounded_steps: list[dict], llm_response: dict) -> list[dict]:
+    """Merge grounded flow steps with LLM step annotations and gap steps."""
+    steps = [dict(s) for s in grounded_steps]  # shallow copy
+
+    # Apply LLM annotations
+    for ann in llm_response.get("step_annotations", []):
+        idx = ann.get("step_index", 0) - 1  # 1-based to 0-based
+        if 0 <= idx < len(steps):
+            steps[idx]["explanation"] = ann.get("explanation", "")
+
+    # Insert gap steps (reverse order to preserve indices)
+    gap_steps = llm_response.get("gap_steps", [])
+    for gap in sorted(gap_steps, key=lambda g: g.get("after_step", 0), reverse=True):
+        insert_pos = min(gap.get("after_step", 0), len(steps))
+        steps.insert(insert_pos, {
+            "label": gap.get("label", "propagation"),
+            "location": gap.get("location", ""),
+            "code": gap.get("code", ""),
+            "explanation": gap.get("explanation", ""),
+            "grounded": False,
+        })
+
+    return steps
 
 
 class Orchestrator:
@@ -658,6 +684,16 @@ class Orchestrator:
         """Send a single batch of findings to the LLM."""
         findings_text, finding_memories = self._prepare_batch(findings, repo_url, profile)
 
+        # Ground flow steps from enrichment data
+        grounded_steps_by_finding: dict[int, list[dict]] = {}
+        for i, f in enumerate(findings):
+            ctx = contexts.get(i)
+            if ctx:
+                joern_path = ctx.taint_path if ctx.taint_path else None
+                steps = ground_flow_steps(ctx.taint_flow, f.path, joern_path)
+                if steps:
+                    grounded_steps_by_finding[i] = steps
+
         if self._prompt_strategy == "two_stage":
             # Skip Stage 1 (dataflow) if no finding has meaningful enrichment context.
             # Saves an entire LLM call for config findings (Dockerfile, HTML templates, etc.)
@@ -670,7 +706,7 @@ class Orchestrator:
             else:
                 return await self._analyze_batch_two_stage(
                     findings, findings_text, contexts, llm, profile, repo_map, repo_url,
-                    finding_memories, index_offset,
+                    finding_memories, index_offset, grounded_steps_by_finding,
                 )
 
         # Single-pass path
@@ -681,9 +717,10 @@ class Orchestrator:
             memories=finding_memories,
             repo_map=repo_map,
             profile=profile,
+            grounded_steps_by_finding=grounded_steps_by_finding,
         )
         parsed = await self._run_single_pass_batch(llm, prompt)
-        return self._map_verdicts(parsed, findings, finding_memories, index_offset)
+        return self._map_verdicts(parsed, findings, finding_memories, index_offset, grounded_steps_by_finding)
 
     async def _run_single_pass_batch(
         self,
@@ -720,12 +757,13 @@ class Orchestrator:
         repo_url: str,
         finding_memories: dict[int, list],
         index_offset: int,
+        grounded_steps_by_finding: dict[int, list[dict]] | None = None,
     ) -> list[FindingVerdict]:
         """Two-stage analysis: Stage 1 (dataflow) -> Stage 2 (verdict)."""
         file_path = findings[0].path
 
         # Stage 1: dataflow analysis
-        df_prompt = build_dataflow_prompt(file_path, findings_text, contexts)
+        df_prompt = build_dataflow_prompt(file_path, findings_text, contexts, grounded_steps_by_finding=grounded_steps_by_finding)
         messages1 = [("system", SYSTEM_PROMPT_DATAFLOW), ("human", df_prompt)]
 
         try:
@@ -736,9 +774,10 @@ class Orchestrator:
             prompt = build_grouped_prompt(
                 file_path=file_path, findings=findings_text, contexts=contexts,
                 memories=finding_memories, repo_map=repo_map, profile=profile,
+                grounded_steps_by_finding=grounded_steps_by_finding,
             )
             parsed = await self._run_single_pass_batch(llm, prompt)
-            return self._map_verdicts(parsed, findings, finding_memories, index_offset)
+            return self._map_verdicts(parsed, findings, finding_memories, index_offset, grounded_steps_by_finding)
 
         # Stage 2: verdict with dataflow summaries
         summaries = {r.finding_index: r.model_dump() for r in df_result.results}
@@ -746,6 +785,7 @@ class Orchestrator:
             file_path=file_path, findings=findings_text, contexts=contexts,
             memories=finding_memories, repo_map=repo_map, profile=profile,
             dataflow_summaries=summaries,
+            grounded_steps_by_finding=grounded_steps_by_finding,
         )
         messages2 = [("system", SYSTEM_PROMPT_VERDICT), ("human", stage2_prompt)]
 
@@ -773,7 +813,7 @@ class Orchestrator:
                 d["flow_steps"] = df_match.get("flow_steps", [])
                 parsed.append(d)
 
-        return self._map_verdicts(parsed, findings, finding_memories, index_offset)
+        return self._map_verdicts(parsed, findings, finding_memories, index_offset, grounded_steps_by_finding)
 
     def _map_verdicts(
         self,
@@ -781,6 +821,7 @@ class Orchestrator:
         findings: list[SemgrepFinding],
         finding_memories: dict[int, list],
         index_offset: int,
+        grounded_steps_by_finding: dict[int, list[dict]] | None = None,
     ) -> list[FindingVerdict]:
         """Map parsed LLM dicts back to FindingVerdict objects."""
         verdicts = []
@@ -798,6 +839,14 @@ class Orchestrator:
                     else:
                         verdict = "uncertain"
                 raw_conf = matched.get("confidence", 0.0)
+                # Merge grounded steps with LLM annotations
+                grounded = (grounded_steps_by_finding or {}).get(i, [])
+                if grounded:
+                    merged_steps = _merge_grounded_and_llm(grounded, matched)
+                else:
+                    raw_steps = matched.get("flow_steps", [])
+                    merged_steps = [{**s, "grounded": False} for s in raw_steps] if raw_steps else []
+
                 verdicts.append(FindingVerdict(
                     finding_index=global_index,
                     fingerprint=finding.fingerprint,
@@ -805,7 +854,7 @@ class Orchestrator:
                     confidence=max(0.0, min(1.0, raw_conf)),
                     reasoning=matched.get("reasoning", ""),
                     dataflow_analysis=matched.get("dataflow_analysis", ""),
-                    flow_steps=matched.get("flow_steps", []),
+                    flow_steps=merged_steps,
                     remediation_code=matched.get("remediation_code"),
                     remediation_explanation=matched.get("remediation_explanation"),
                     applied_memory_ids=[m.id for m in finding_memories.get(i, [])],
