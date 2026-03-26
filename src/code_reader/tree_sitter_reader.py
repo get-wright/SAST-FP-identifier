@@ -43,6 +43,9 @@ class LanguageConfig:
     return_types: tuple[str, ...] = ()
     conditional_types: tuple[str, ...] = ()
     dangerous_sources: tuple[str, ...] = ()
+    iteration_types: tuple[str, ...] = ()
+    callback_methods: tuple[str, ...] = ()
+    callback_returns_value: frozenset[str] = frozenset()
 
 
 # Core languages (always imported)
@@ -57,6 +60,9 @@ _LANG_REGISTRY: dict[str, tuple[object, LanguageConfig]] = {
         conditional_types=("if_statement", "try_statement", "elif_clause", "else_clause"),
         dangerous_sources=("request.args", "request.form", "request.json", "request.data",
                            "os.environ", "sys.argv", "input()", "request.GET", "request.POST"),
+        iteration_types=("for_statement",),
+        callback_methods=("map", "filter", "sorted", "min", "max"),
+        callback_returns_value=frozenset({"map", "filter", "sorted", "min", "max"}),
     )),
     ".js": (ts_javascript, LanguageConfig(
         func_types=["function_declaration", "arrow_function", "method_definition"],
@@ -69,6 +75,9 @@ _LANG_REGISTRY: dict[str, tuple[object, LanguageConfig]] = {
         conditional_types=("if_statement", "try_statement", "switch_statement", "ternary_expression"),
         dangerous_sources=("req.body", "req.query", "req.params", "req.headers",
                            "document.location", "window.location", "process.env"),
+        iteration_types=("for_in_statement",),
+        callback_methods=("forEach", "map", "filter", "find", "some", "every", "reduce", "flatMap", "sort", "replace"),
+        callback_returns_value=frozenset({"map", "filter", "find", "reduce", "flatMap", "sort"}),
     )),
     ".jsx": (ts_javascript, LanguageConfig(
         func_types=["function_declaration", "arrow_function", "method_definition"],
@@ -81,6 +90,9 @@ _LANG_REGISTRY: dict[str, tuple[object, LanguageConfig]] = {
         conditional_types=("if_statement", "try_statement", "switch_statement", "ternary_expression"),
         dangerous_sources=("req.body", "req.query", "req.params", "req.headers",
                            "document.location", "window.location", "process.env"),
+        iteration_types=("for_in_statement",),
+        callback_methods=("forEach", "map", "filter", "find", "some", "every", "reduce", "flatMap", "sort", "replace"),
+        callback_returns_value=frozenset({"map", "filter", "find", "reduce", "flatMap", "sort"}),
     )),
     ".ts": (language_typescript, LanguageConfig(
         func_types=["function_declaration", "arrow_function", "method_definition"],
@@ -93,6 +105,9 @@ _LANG_REGISTRY: dict[str, tuple[object, LanguageConfig]] = {
         conditional_types=("if_statement", "try_statement", "switch_statement", "ternary_expression"),
         dangerous_sources=("req.body", "req.query", "req.params", "req.headers",
                            "document.location", "window.location", "process.env"),
+        iteration_types=("for_in_statement",),
+        callback_methods=("forEach", "map", "filter", "find", "some", "every", "reduce", "flatMap", "sort", "replace"),
+        callback_returns_value=frozenset({"map", "filter", "find", "reduce", "flatMap", "sort"}),
     )),
     ".tsx": (language_tsx, LanguageConfig(
         func_types=["function_declaration", "arrow_function", "method_definition"],
@@ -105,6 +120,9 @@ _LANG_REGISTRY: dict[str, tuple[object, LanguageConfig]] = {
         conditional_types=("if_statement", "try_statement", "switch_statement", "ternary_expression"),
         dangerous_sources=("req.body", "req.query", "req.params", "req.headers",
                            "document.location", "window.location", "process.env"),
+        iteration_types=("for_in_statement",),
+        callback_methods=("forEach", "map", "filter", "find", "some", "every", "reduce", "flatMap", "sort", "replace"),
+        callback_returns_value=frozenset({"map", "filter", "find", "reduce", "flatMap", "sort"}),
     )),
     ".go": (ts_go, LanguageConfig(
         func_types=["function_declaration", "method_declaration"],
@@ -115,6 +133,7 @@ _LANG_REGISTRY: dict[str, tuple[object, LanguageConfig]] = {
         return_types=("return_statement",),
         conditional_types=("if_statement", "switch_statement"),
         dangerous_sources=("r.URL.Query", "r.FormValue", "r.Body", "os.Getenv", "os.Args"),
+        iteration_types=("for_range_clause",),
     )),
     ".java": (ts_java, LanguageConfig(
         func_types=["method_declaration", "constructor_declaration"],
@@ -126,6 +145,9 @@ _LANG_REGISTRY: dict[str, tuple[object, LanguageConfig]] = {
         conditional_types=("if_statement", "try_statement", "switch_expression"),
         dangerous_sources=("request.getParameter", "request.getAttribute", "request.getHeader",
                            "System.getenv", "System.getProperty"),
+        iteration_types=("enhanced_for_statement",),
+        callback_methods=("forEach", "map", "filter", "flatMap", "collect", "reduce", "sorted", "peek"),
+        callback_returns_value=frozenset({"map", "filter", "flatMap", "collect", "reduce", "sorted"}),
     )),
     ".php": (ts_php, LanguageConfig(
         func_types=["function_definition", "method_declaration"],
