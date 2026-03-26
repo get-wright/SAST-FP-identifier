@@ -302,7 +302,22 @@ def _strip_list_wrapper(s: str) -> str:
 
 ## Testing
 
-- **Unit**: `tests/test_scope_analyzer.py` — scope tree building for JS/TS/Python, callback binding, for...of, destructuring
+### Test fixtures from real-world taint patterns
+
+Before writing tests, search the internet for real-world taint tracing test fixtures and vulnerable code samples. Use these as the basis for test cases rather than inventing synthetic examples. Sources to check:
+
+- **OWASP Benchmark** (https://github.com/OWASP-Benchmark/BenchmarkJava) — thousands of test cases for Java taint flows with known TP/FP ground truth. Extract representative patterns for callback iteration, sanitizer detection, and cross-scope flows.
+- **Semgrep test rules** — search the semgrep-rules repo (https://github.com/semgrep/semgrep-rules) for taint-mode rules with test files. Each rule in `**/test/` has `.js`, `.py`, `.ts` files with `// ruleid:` and `// ok:` annotations marking expected TP/FP. Use these as ground truth for callback and iteration patterns.
+- **CodeQL JS/TS tests** — search the CodeQL repo (https://github.com/github/codeql) under `javascript/ql/test/` for dataflow and taint tracking test cases. These include callback propagation, template literal sinks, and sanitizer barrier tests.
+- **Juice Shop** (https://github.com/juice-shop/juice-shop) — intentionally vulnerable Node.js app. Extract real taint flows involving Express routes → callback chains → SQL/XSS sinks.
+- **DVNA** (https://github.com/appsecco/dvna) — Damn Vulnerable Node Application. Simple Express patterns with clear source→sink flows through callbacks.
+- **NodeGoat** (https://github.com/OWASP/NodeGoat) — OWASP Node.js vulnerable app with documented vulnerabilities. Good for testing Express `req.body`/`req.query` → callback → sink patterns.
+
+For each test file, use the context7 MCP server to look up the latest documentation and verify the test patterns are current.
+
+### Test categories
+
+- **Unit**: `tests/test_scope_analyzer.py` — scope tree building for JS/TS/Python, callback binding, for...of, destructuring. Use fixture code extracted from the above sources.
 - **Unit**: `tests/test_flow_tracker.py` — existing tests must pass + new tests for callback taint propagation, loop variable tracing, sanitizer in callback return
 - **Unit**: `tests/test_joern_client.py` — malformed List() output, nested parens, empty output, valid paths
 - **Integration**: Re-run against smallweb and kite-public findings, verify previously-sink-only flows now have sources
