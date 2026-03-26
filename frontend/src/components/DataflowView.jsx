@@ -159,15 +159,20 @@ function LLMFlowSteps({ steps, dataflowAnalysis }) {
         {steps.map((step, i) => {
           const isLast = i === steps.length - 1;
           const color = ROLE_COLORS[step.label] || "var(--text-tertiary)";
+          const isGrounded = step.grounded !== false;
           return (
             <div key={i} class={styles.step}>
               <div class={styles.stepLeft}>
                 <div class={styles.dot} style={{ background: color }} />
-                {!isLast && <div class={styles.connector} />}
+                {!isLast && (
+                  <div class={isGrounded ? styles.connector : styles.connectorDashed} />
+                )}
               </div>
               <div class={styles.stepBody}>
                 <div class={styles.stepHeader}>
                   <span class={styles.stepLabel} style={{ color }}>{step.label.toUpperCase()}</span>
+                  {isGrounded && <span class={styles.groundedChip}>AST</span>}
+                  {!isGrounded && <span class={styles.inferredChip}>inferred</span>}
                   {step.location && (
                     <span class={styles.stepLocation}>{step.location}</span>
                   )}
