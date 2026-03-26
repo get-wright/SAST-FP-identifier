@@ -25,6 +25,7 @@ from src.llm.prompt_builder import (
 )
 from src.llm.provider import create_chat_model
 from src.llm.schemas import DataflowBatch, VerdictOnlyBatch, VerdictOutputBatch
+from src.llm.structured_output import invoke_structured
 from langchain_core.language_models import BaseChatModel
 from src.models.analysis import AnalysisResult, CallerInfo, FileGroupResult, FindingContext, FindingVerdict, TaintFlow
 from src.models.semgrep import SemgrepFinding, parse_semgrep_json
@@ -681,14 +682,13 @@ class Orchestrator:
         prompt: str,
     ) -> list[dict[str, Any]]:
         """Execute single-pass LLM call and return parsed verdict dicts."""
-        structured = llm.with_structured_output(VerdictOutputBatch)
         messages = [("system", SYSTEM_PROMPT_SINGLE_PASS), ("human", prompt)]
 
         async with self._semaphore:
             batch_result = None
             for attempt in range(1 + self._retry_count):
                 try:
-                    batch_result = await structured.ainvoke(messages)
+                    batch_result = await invoke_structured(llm, VerdictOutputBatch, messages)
                     break
                 except Exception as e:
                     if attempt < self._retry_count:
@@ -717,12 +717,11 @@ class Orchestrator:
 
         # Stage 1: dataflow analysis
         df_prompt = build_dataflow_prompt(file_path, findings_text, contexts)
-        df_structured = llm.with_structured_output(DataflowBatch)
         messages1 = [("system", SYSTEM_PROMPT_DATAFLOW), ("human", df_prompt)]
 
         try:
             async with self._semaphore:
-                df_result = await df_structured.ainvoke(messages1)
+                df_result = await invoke_structured(llm, DataflowBatch, messages1)
         except Exception as e:
             logger.warning("Stage 1 (dataflow) failed, falling back to single-pass: %s", e)
             prompt = build_grouped_prompt(
@@ -739,14 +738,13 @@ class Orchestrator:
             memories=finding_memories, repo_map=repo_map, profile=profile,
             dataflow_summaries=summaries,
         )
-        v_structured = llm.with_structured_output(VerdictOnlyBatch)
         messages2 = [("system", SYSTEM_PROMPT_VERDICT), ("human", stage2_prompt)]
 
         async with self._semaphore:
             v_result = None
             for attempt in range(1 + self._retry_count):
                 try:
-                    v_result = await v_structured.ainvoke(messages2)
+                    v_result = await invoke_structured(llm, VerdictOnlyBatch, messages2)
                     break
                 except Exception as e:
                     if attempt < self._retry_count:
