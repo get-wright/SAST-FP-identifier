@@ -11,6 +11,9 @@ _KIND_TO_LABEL = {
     "call_result": "propagation",
     "return": "propagation",
     "sink": "sink",
+    "callback_param": "propagation",
+    "iteration_var": "propagation",
+    "callback_return": "propagation",
 }
 
 
