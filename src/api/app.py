@@ -42,7 +42,7 @@ def create_app(
         set_orchestrator(orch)
 
     # Static frontend (must come after router so API routes take priority)
-    frontend_dir = os.path.join(os.path.dirname(__file__), "../../frontend")
+    frontend_dir = os.path.join(os.path.dirname(__file__), "../../frontend/dist")
     if os.path.isdir(frontend_dir):
         app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
 
