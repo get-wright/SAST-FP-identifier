@@ -44,6 +44,33 @@ def _extract_json_from_text(text: str) -> str:
     return text.strip()
 
 
+def _extract_text_content(response) -> str:
+    """Extract text from an LLM response, handling reasoning model content blocks.
+
+    Reasoning models (o1/o3/gpt-5.4-mini) may return content as a list of
+    content blocks [{"type": "thinking", ...}, {"type": "text", "text": "..."}]
+    instead of a plain string.
+    """
+    content = response.content if hasattr(response, "content") else str(response)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        # Extract text blocks, skip thinking blocks
+        text_parts = []
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "text":
+                    text_parts.append(block.get("text", ""))
+                elif block.get("type") != "thinking":
+                    text_parts.append(str(block))
+            elif isinstance(block, str):
+                text_parts.append(block)
+            elif hasattr(block, "text"):
+                text_parts.append(block.text)
+        return "\n".join(text_parts) if text_parts else str(content)
+    return str(content)
+
+
 async def invoke_structured(
     llm: BaseChatModel,
     schema: type[T],
@@ -64,7 +91,7 @@ async def invoke_structured(
 
     # Fallback: plain invoke + JSON extraction
     response = await llm.ainvoke(messages)
-    text = response.content if hasattr(response, "content") else str(response)
+    text = _extract_text_content(response)
     json_str = _extract_json_from_text(text)
     parsed = json.loads(json_str)
 
