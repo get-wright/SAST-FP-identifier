@@ -60,7 +60,7 @@ class Scope:
     """One scope in the scope tree (function, arrow, loop body)."""
 
     kind: str                                       # "function", "arrow", "for_of", "for_in", "lambda"
-    params: set[str] = field(default_factory=set)
+    params: dict[str, int] = field(default_factory=dict)  # name → line number
     deps: dict[str, list[DepEntry]] = field(default_factory=dict)
     children: list[Scope] = field(default_factory=list)
     call_sites: list[CallSite] = field(default_factory=list)
@@ -325,7 +325,8 @@ def _trace_path(
 
     # Base: root scope parameter
     if scope is root and var in root.params:
-        return [FlowStep(variable=var, line=0, expression=f"parameter: {var}", kind="parameter")]
+        param_line = root.params[var]  # actual line from AST
+        return [FlowStep(variable=var, line=param_line, expression=f"parameter: {var}", kind="parameter")]
 
     # Base: dangerous source in deps
     for entry in scope.deps.get(var, []):
@@ -342,7 +343,8 @@ def _trace_path(
                 parent_path = _trace_path(cs.receiver_var, parent, state, root, config, visited)
                 if parent_path is not None:
                     kind = "iteration_var" if cs.callee == "@@iterator" else "callback_param"
-                    step = FlowStep(variable=var, line=0, expression=f"{cs.callee}({var})", kind=kind)
+                    param_line = scope.params.get(var, scope.node.start_point[0] + 1)
+                    step = FlowStep(variable=var, line=param_line, expression=f"{cs.callee}({var})", kind=kind)
                     return parent_path + [step]
 
     # Assignment dep: trace RHS variables
@@ -410,9 +412,9 @@ def _node_to_scope_kind(node: Node) -> str:
     return "function"
 
 
-def _extract_params(func_node: Node, config: LanguageConfig) -> set[str]:
-    """Extract parameter names from a function/arrow/loop node."""
-    params: set[str] = set()
+def _extract_params(func_node: Node, config: LanguageConfig) -> dict[str, int]:
+    """Extract parameter names and their line numbers from a function/arrow/loop node."""
+    params: dict[str, int] = {}
 
     # For loops: params come from the `left` field
     if func_node.type in config.iteration_types:
@@ -439,7 +441,7 @@ def _extract_params(func_node: Node, config: LanguageConfig) -> set[str]:
             if child.type == "lambda_parameters":
                 for n in _walk(child):
                     if n.type == "identifier":
-                        params.add(n.text.decode())
+                        params[n.text.decode()] = n.start_point[0] + 1
         return params
 
     # Regular function: look for parameter_types children
@@ -450,21 +452,21 @@ def _extract_params(func_node: Node, config: LanguageConfig) -> set[str]:
     return params
 
 
-def _extract_identifiers_from_params_node(params_node: Node, out: set[str]) -> None:
-    """Extract all identifier names from a formal_parameters / parameters node."""
+def _extract_identifiers_from_params_node(params_node: Node, out: dict[str, int]) -> None:
+    """Extract all identifier names and line numbers from a formal_parameters / parameters node."""
     for n in _walk(params_node):
         if n.type == "identifier":
-            out.add(n.text.decode())
+            out[n.text.decode()] = n.start_point[0] + 1
 
 
-def _extract_identifiers_from_pattern(node: Node, out: set[str]) -> None:
+def _extract_identifiers_from_pattern(node: Node, out: dict[str, int]) -> None:
     """Extract identifiers from a pattern (identifier, object_pattern, array_pattern)."""
     if node.type == "identifier":
-        out.add(node.text.decode())
+        out[node.text.decode()] = node.start_point[0] + 1
     elif node.type == "object_pattern":
         for child in node.children:
             if child.type == "shorthand_property_identifier_pattern":
-                out.add(child.text.decode())
+                out[child.text.decode()] = child.start_point[0] + 1
             elif child.type == "pair_pattern":
                 value = child.child_by_field_name("value")
                 if value:
