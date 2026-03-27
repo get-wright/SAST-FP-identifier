@@ -152,7 +152,7 @@ def propagate_taint(
 
 
 def _init_taint(root: Scope, config: LanguageConfig) -> TaintState:
-    """Seed taint: root params are tainted; deps with dangerous sources too."""
+    """Seed taint: root params, dangerous sources, and external references."""
     state: TaintState = {}
     tainted = set(root.params)
 
@@ -161,6 +161,19 @@ def _init_taint(root: Scope, config: LanguageConfig) -> TaintState:
         for entry in entries:
             if _expr_has_dangerous_source(entry.expr, config):
                 tainted.add(var)
+
+    # External references: call site receivers that aren't locally defined
+    # (imports, globals, module-level variables) — conservatively treat as tainted
+    # since we can't verify their content within this function's scope
+    local_vars = set(root.params) | set(root.deps.keys())
+    for cs in root.call_sites:
+        if cs.receiver_var and cs.receiver_var not in local_vars:
+            tainted.add(cs.receiver_var)
+    # Also check child scopes for external receivers
+    for child in root.children:
+        for cs in child.call_sites:
+            if cs.receiver_var and cs.receiver_var not in local_vars:
+                tainted.add(cs.receiver_var)
 
     state[id(root)] = tainted
     return state
@@ -218,6 +231,18 @@ def _propagate_round(scope: Scope, state: TaintState, config: LanguageConfig) ->
                     result_var = _find_call_result_var(scope, cs)
                     if result_var and result_var not in tainted:
                         tainted.add(result_var)
+
+    # Closure capture: propagate tainted variables from this scope into child scopes
+    # that reference them (not just via call_sites, but any nested scope that captures a var)
+    for child in scope.children:
+        child_tainted = state.setdefault(id(child), set())
+        for var, entries in child.deps.items():
+            for entry in entries:
+                captured = entry.rhs_ids & tainted
+                for cap_var in captured:
+                    if cap_var not in child_tainted:
+                        child_tainted.add(cap_var)
+                        changed = True
 
     # Recurse into children
     for child in scope.children:
@@ -357,25 +382,40 @@ def _trace_path(
                 return sub + [FlowStep(variable=var, line=entry.line, expression=entry.expr, kind="assignment")]
 
     # Callback return: if this var is the result of a callback call
-    if scope.parent is None or scope is root:
-        for cs in scope.call_sites:
-            if not cs.returns_value or cs.callback_scope is None:
-                continue
-            result_var = _find_call_result_var(scope, cs)
-            if result_var != var:
-                continue
-            cb = cs.callback_scope
-            cb_tainted = state.get(id(cb), set())
-            for ret in cb.return_exprs:
-                for ret_var in ret.identifiers:
-                    if ret_var in cb_tainted:
-                        sub = _trace_path(ret_var, cb, state, root, config, visited)
-                        if sub is not None:
-                            step = FlowStep(
-                                variable=var, line=ret.line,
-                                expression=ret.expr, kind="callback_return",
-                            )
-                            return sub + [step]
+    for cs in scope.call_sites:
+        if not cs.returns_value or cs.callback_scope is None:
+            continue
+        result_var = _find_call_result_var(scope, cs)
+        if result_var != var:
+            continue
+        cb = cs.callback_scope
+        cb_tainted = state.get(id(cb), set())
+        for ret in cb.return_exprs:
+            for ret_var in ret.identifiers:
+                if ret_var in cb_tainted:
+                    sub = _trace_path(ret_var, cb, state, root, config, visited)
+                    if sub is not None:
+                        step = FlowStep(
+                            variable=var, line=ret.line,
+                            expression=ret.expr, kind="callback_return",
+                        )
+                        return sub + [step]
+
+    # Closure capture: variable tainted from an ancestor scope
+    if scope.parent is not None and var not in scope.params and var not in scope.deps:
+        # var is captured from an outer scope — trace it there
+        ancestor = scope.parent
+        while ancestor is not None:
+            if var in state.get(id(ancestor), set()):
+                sub = _trace_path(var, ancestor, state, root, config, visited)
+                if sub is not None:
+                    return sub
+            ancestor = ancestor.parent
+
+    # External/import: variable is tainted but not traceable within this function
+    # (module-level import, global, or unresolved reference)
+    if var in tainted and var not in scope.params and var not in scope.deps:
+        return [FlowStep(variable=var, line=0, expression=f"external: {var}", kind="external")]
 
     return None
 

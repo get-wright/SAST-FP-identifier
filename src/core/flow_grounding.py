@@ -14,6 +14,7 @@ _KIND_TO_LABEL = {
     "callback_param": "propagation",
     "iteration_var": "propagation",
     "callback_return": "propagation",
+    "external": "source",
 }
 
 
