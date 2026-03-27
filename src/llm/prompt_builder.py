@@ -285,7 +285,7 @@ def build_grouped_prompt(
     max_chars = max_tokens * CHARS_PER_TOKEN
     parts = []
 
-    # Project context from SBOM
+    # Project context from SBOM — pass raw dependency data, let LLM reason about protections
     if profile and profile.all_deps:
         ctx_lines = []
         if profile.language:
@@ -300,15 +300,7 @@ def build_grouped_prompt(
             shown = ', '.join(profile.all_deps[:80])
             ctx_lines.append(f"Installed (first 80 of {dep_count}): {shown}")
         if profile.security_deps:
-            ctx_lines.append(f"Security deps: {', '.join(profile.security_deps)}")
-
-        # Detected security capabilities (from deps + framework defaults)
-        capabilities = _detect_capabilities(profile)
-        if capabilities:
-            ctx_lines.append(f"Detected protections: {', '.join(sorted(capabilities))}")
-        missing = _detect_missing_protections(profile)
-        if missing:
-            ctx_lines.append(f"NOT detected: {', '.join(sorted(missing))}")
+            ctx_lines.append(f"Security-relevant deps: {', '.join(profile.security_deps)}")
 
         parts.append("PROJECT CONTEXT (SBOM):\n" + "\n".join(ctx_lines) + "\n")
 
@@ -538,46 +530,3 @@ def _file_type_hint(file_path: str) -> str:
     return ""
 
 
-_CAPABILITY_LABELS = {
-    "csrf": "CSRF protection",
-    "xss": "XSS auto-escaping",
-    "xss_headers": "XSS security headers",
-    "xss_sanitizer": "XSS sanitization library",
-    "orm": "SQL ORM (parameterized queries)",
-    "auth": "Authentication library",
-}
-
-_COMMON_PROTECTIONS = {"csrf", "xss", "orm"}
-
-
-def _detect_capabilities(profile) -> list[str]:
-    """Build human-readable list of detected security capabilities."""
-    caps = []
-    if profile.has_csrf_protection:
-        caps.append("CSRF protection")
-    if profile.has_xss_protection:
-        caps.append("XSS auto-escaping/sanitization")
-    if profile.has_sql_orm:
-        caps.append("SQL ORM (parameterized queries)")
-    # Include named security deps for specificity
-    if profile.security_deps:
-        for dep in profile.security_deps:
-            from src.sbom.profile import SECURITY_DEPS
-            info = SECURITY_DEPS.get(dep, {})
-            for prov in info.get("provides", []):
-                label = _CAPABILITY_LABELS.get(prov)
-                if label and label not in caps:
-                    caps.append(label)
-    return caps
-
-
-def _detect_missing_protections(profile) -> list[str]:
-    """Build list of common protections NOT detected."""
-    missing = []
-    if not profile.has_csrf_protection:
-        missing.append("CSRF protection")
-    if not profile.has_xss_protection:
-        missing.append("XSS auto-escaping")
-    if not profile.has_sql_orm:
-        missing.append("SQL ORM")
-    return missing
