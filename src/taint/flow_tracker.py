@@ -92,6 +92,7 @@ def _trace_with_scope_tree(func_node, config, file_path, sink_line, check_id, cw
 def _trace_flat(func_node, config, file_path, sink_line, check_id, cwe_list):
     """Original flat analysis — fallback when scope tree doesn't produce a result."""
     params = _extract_parameters(func_node, config)
+    param_lines = _extract_parameter_lines(func_node, config)
     deps, sanitizers, unresolved = _build_deps(func_node, config, params)
     sink_vars = _find_vars_at_line(func_node, sink_line, config)
 
@@ -101,7 +102,7 @@ def _trace_flat(func_node, config, file_path, sink_line, check_id, cwe_list):
     # Trace backwards from each sink variable; take the first successful trace
     for sink_var in sink_vars:
         path, used_sanitizers = _trace_back(
-            sink_var, deps, sanitizers, params, config, set(),
+            sink_var, deps, sanitizers, params, config, set(), param_lines,
         )
         if path is None:
             continue
@@ -256,6 +257,21 @@ def _extract_parameters(func_node: Node, config: LanguageConfig) -> set[str]:
                 if node.type == "identifier":
                     params.add(node.text.decode())
     return params
+
+
+def _extract_parameter_lines(func_node: Node, config: LanguageConfig) -> dict[str, int]:
+    """Extract parameter names with their line numbers from tree-sitter AST."""
+    result: dict[str, int] = {}
+    for child in func_node.children:
+        if child.type in config.parameter_types:
+            for node in _walk(child):
+                if node.type == "identifier":
+                    result[node.text.decode()] = node.start_point[0] + 1
+    # Arrow function single param
+    param_node = func_node.child_by_field_name("parameter")
+    if param_node and param_node.type == "identifier":
+        result[param_node.text.decode()] = param_node.start_point[0] + 1
+    return result
 
 
 # Dep entry: {"deps": set[str], "line": int, "expr": str, "node": Node, "sanitizer": SanitizerInfo|None}
@@ -435,6 +451,7 @@ def _trace_back(
     params: set[str],
     config: LanguageConfig,
     visited: set[str],
+    param_lines: dict[str, int] | None = None,
 ) -> tuple[Optional[list[FlowStep]], list[SanitizerInfo]]:
     """Recursively trace a variable back to its source.
 
@@ -447,7 +464,8 @@ def _trace_back(
 
     # Base case: parameter
     if var in params:
-        step = FlowStep(variable=var, line=0, expression=f"parameter: {var}", kind="parameter")
+        line = (param_lines or {}).get(var, 0)
+        step = FlowStep(variable=var, line=line, expression=f"parameter: {var}", kind="parameter")
         return [step], []
 
     # Base case: not in deps at all (external or builtin)
@@ -471,7 +489,7 @@ def _trace_back(
         for dep_var in dep_vars:
             if dep_var == var:
                 continue
-            sub_path, sub_sans = _trace_back(dep_var, deps, sanitizers_by_var, params, config, visited)
+            sub_path, sub_sans = _trace_back(dep_var, deps, sanitizers_by_var, params, config, visited, param_lines)
             if sub_path is not None:
                 step = FlowStep(variable=var, line=line, expression=expr, kind="assignment")
                 san_list = sanitizers_by_var.get(var, [])
