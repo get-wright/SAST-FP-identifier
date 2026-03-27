@@ -299,9 +299,6 @@ def build_grouped_prompt(
         else:
             shown = ', '.join(profile.all_deps[:80])
             ctx_lines.append(f"Installed (first 80 of {dep_count}): {shown}")
-        if profile.security_deps:
-            ctx_lines.append(f"Security-relevant deps: {', '.join(profile.security_deps)}")
-
         parts.append("PROJECT CONTEXT (SBOM):\n" + "\n".join(ctx_lines) + "\n")
 
     # Repo map (capped at 1500 tokens)
