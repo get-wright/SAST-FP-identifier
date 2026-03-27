@@ -13,6 +13,8 @@ For each finding, consider internally:
 - Is there sanitization/escaping between source and sink?
 - Does untrusted data actually reach the vulnerable sink?
 - Can it be meaningfully exploited in this context?
+- RULE APPLICABILITY: Check the rule ID against the PROJECT CONTEXT. If the rule targets a specific framework or library (identifiable from the rule ID, e.g., "django.", "rails.", "spring.") but PROJECT CONTEXT shows a different framework, the rule is a false positive — the check is irrelevant to this codebase. Even if the underlying security concern exists, a rule designed for one framework cannot correctly detect issues in another. Mark as false_positive and explain the mismatch.
+- EXECUTION CONTEXT: Consider where this code actually runs. CI/CD configs, build scripts, and test files have different threat models than production application code. For workflow files, distinguish between expressions evaluated by the CI runner vs values injected into shell scripts.
 
 Then produce:
 - "reasoning": A natural paragraph of 3-5 sentences explaining WHY this finding is or is not a real vulnerability. Write as a security reviewer explaining to a colleague. Cite specific code patterns. Do not use section headers or labels like "SOURCE:" — just explain clearly.
@@ -299,21 +301,14 @@ def build_grouped_prompt(
             ctx_lines.append(f"Installed (first 80 of {dep_count}): {shown}")
         if profile.security_deps:
             ctx_lines.append(f"Security deps: {', '.join(profile.security_deps)}")
-        if not profile.has_csrf_protection:
-            ctx_lines.append("CSRF protection: NONE DETECTED")
-        else:
-            ctx_lines.append("CSRF protection: Present")
-        if profile.has_xss_protection:
-            ctx_lines.append("XSS protection: Template auto-escaping active")
-        if profile.has_sql_orm:
-            ctx_lines.append("SQL ORM: Present (parameterized queries likely)")
-        else:
-            ctx_lines.append("SQL ORM: NONE DETECTED")
 
-        # Framework-specific notes
-        notes = _framework_notes(profile)
-        if notes:
-            ctx_lines.append(f"NOTE: {notes}")
+        # Detected security capabilities (from deps + framework defaults)
+        capabilities = _detect_capabilities(profile)
+        if capabilities:
+            ctx_lines.append(f"Detected protections: {', '.join(sorted(capabilities))}")
+        missing = _detect_missing_protections(profile)
+        if missing:
+            ctx_lines.append(f"NOT detected: {', '.join(sorted(missing))}")
 
         parts.append("PROJECT CONTEXT (SBOM):\n" + "\n".join(ctx_lines) + "\n")
 
@@ -543,15 +538,46 @@ def _file_type_hint(file_path: str) -> str:
     return ""
 
 
-def _framework_notes(profile) -> str:
-    """Generate framework-specific security notes."""
-    fw = profile.framework
-    if fw == "flask" and not profile.has_csrf_protection:
-        return "Flask does NOT include built-in CSRF protection. POST forms require Flask-WTF or manual CSRF tokens."
-    if fw == "express" and not profile.has_csrf_protection:
-        return "Express does NOT include built-in CSRF protection. Requires csurf middleware."
-    if fw == "django":
-        return "Django includes CSRF middleware and template auto-escaping by default."
-    if fw == "spring" and not profile.has_csrf_protection:
-        return "Spring does NOT include CSRF protection without Spring Security."
-    return ""
+_CAPABILITY_LABELS = {
+    "csrf": "CSRF protection",
+    "xss": "XSS auto-escaping",
+    "xss_headers": "XSS security headers",
+    "xss_sanitizer": "XSS sanitization library",
+    "orm": "SQL ORM (parameterized queries)",
+    "auth": "Authentication library",
+}
+
+_COMMON_PROTECTIONS = {"csrf", "xss", "orm"}
+
+
+def _detect_capabilities(profile) -> list[str]:
+    """Build human-readable list of detected security capabilities."""
+    caps = []
+    if profile.has_csrf_protection:
+        caps.append("CSRF protection")
+    if profile.has_xss_protection:
+        caps.append("XSS auto-escaping/sanitization")
+    if profile.has_sql_orm:
+        caps.append("SQL ORM (parameterized queries)")
+    # Include named security deps for specificity
+    if profile.security_deps:
+        for dep in profile.security_deps:
+            from src.sbom.profile import SECURITY_DEPS
+            info = SECURITY_DEPS.get(dep, {})
+            for prov in info.get("provides", []):
+                label = _CAPABILITY_LABELS.get(prov)
+                if label and label not in caps:
+                    caps.append(label)
+    return caps
+
+
+def _detect_missing_protections(profile) -> list[str]:
+    """Build list of common protections NOT detected."""
+    missing = []
+    if not profile.has_csrf_protection:
+        missing.append("CSRF protection")
+    if not profile.has_xss_protection:
+        missing.append("XSS auto-escaping")
+    if not profile.has_sql_orm:
+        missing.append("SQL ORM")
+    return missing
