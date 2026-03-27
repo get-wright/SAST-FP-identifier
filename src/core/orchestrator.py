@@ -151,28 +151,12 @@ _RULE_CATEGORY_KEYWORDS = {
 
 
 def _rule_adjustment(finding, profile: RepoProfile) -> float:
-    """Compute rule adjustment based on SBOM context."""
-    if not profile or not profile.all_deps:
-        return 1.0
+    """Compute rule adjustment based on SBOM context.
 
-    rule_lower = finding.check_id.lower() if finding else ""
-
-    # CSRF finding + no CSRF protection → boost
-    if "csrf" in rule_lower and not profile.has_csrf_protection:
-        return 1.1
-
-    # CSRF finding + CSRF dep present → suppress
-    if "csrf" in rule_lower and profile.has_csrf_protection:
-        return 0.85
-
-    # SQL injection + no ORM → boost
-    if "sql" in rule_lower and not profile.has_sql_orm:
-        return 1.1
-
-    # SQL injection + ORM present → suppress slightly
-    if "sql" in rule_lower and profile.has_sql_orm:
-        return 0.90
-
+    Returns 1.0 (no adjustment) — the LLM handles framework/dep reasoning
+    from the raw dependency list in the prompt. Kept as a hook for future
+    use if needed.
+    """
     return 1.0
 
 
@@ -363,8 +347,6 @@ class Orchestrator:
             if sbom_json:
                 profile = parse_sbom(sbom_json)
                 detail = f"{profile.framework or profile.language or 'unknown'}, {len(profile.all_deps)} deps"
-                if not profile.has_csrf_protection:
-                    detail += ", no CSRF"
                 await self._emit("sbom_generate", "completed", detail=detail, duration_ms=int((time.monotonic() - t0) * 1000))
             else:
                 await self._emit("sbom_generate", "error", detail="SBOM generation failed", duration_ms=int((time.monotonic() - t0) * 1000))
@@ -416,11 +398,7 @@ class Orchestrator:
             sbom_profile={
                 "language": profile.language,
                 "framework": profile.framework,
-                "security_deps": profile.security_deps,
                 "all_deps": profile.all_deps,
-                "has_csrf_protection": profile.has_csrf_protection,
-                "has_xss_protection": profile.has_xss_protection,
-                "has_sql_orm": profile.has_sql_orm,
                 "dep_count": len(profile.all_deps),
             } if profile.all_deps else None,
         )
