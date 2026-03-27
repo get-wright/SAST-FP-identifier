@@ -35,7 +35,7 @@ SEMGREP_JSON = {
 @pytest.mark.asyncio
 async def test_full_pipeline_mocked(tmp_path):
     """End-to-end: API -> orchestrator -> mocked LLM -> response."""
-    app = create_app(api_key="test")
+    app = create_app()
 
     orch = Orchestrator(
         repos_cache_dir=str(tmp_path / "repos"),
@@ -77,7 +77,6 @@ async def test_full_pipeline_mocked(tmp_path):
             resp = await client.post(
                 "/analyze",
                 json={"repo_url": "https://github.com/u/r", "semgrep_json": SEMGREP_JSON},
-                headers={"X-API-Key": "test"},
             )
 
     assert resp.status_code == 200

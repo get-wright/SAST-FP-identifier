@@ -42,6 +42,7 @@ def build_annotated_json(
                 "applied_memory_ids": matched.applied_memory_ids,
                 "override_id": matched.override_id,
                 "dataflow_analysis": matched.dataflow_analysis,
+                "flow_steps": matched.flow_steps,
                 "analyzed_at": datetime.now(timezone.utc).isoformat(),
                 "commit_sha": commit_sha,
                 "llm_provider": llm_provider,
@@ -119,4 +120,6 @@ def _find_graph_context(
         gc["taint_sanitized"] = ctx.taint_sanitized
         gc["taint_path"] = ctx.taint_path
         gc["taint_sanitizers"] = ctx.taint_sanitizers
+    if ctx.taint_flow:
+        gc["taint_flow"] = ctx.taint_flow.to_dict()
     return gc

@@ -1,0 +1,269 @@
+.analysis {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text);
+  margin: 0 0 16px;
+  white-space: pre-wrap;
+}
+
+.empty {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+/* Taint flow timeline */
+.timeline {
+  display: flex;
+  flex-direction: column;
+}
+
+.step {
+  display: flex;
+  gap: 10px;
+  min-height: 36px;
+}
+
+.stepLeft {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  width: 12px;
+}
+
+.dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+
+.dot_source {
+  background: var(--success);
+}
+
+.dot_sink {
+  background: var(--danger);
+}
+
+.dot_propagation {
+  background: var(--warning);
+}
+
+.dot_sanitizer {
+  background: #3b82f6;
+}
+
+.dotPlaceholder {
+  width: 12px;
+  height: 12px;
+  margin-top: 4px;
+}
+
+.connector {
+  width: 2px;
+  flex: 1;
+  background: var(--border);
+  min-height: 8px;
+}
+
+.stepBody {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 12px;
+  min-width: 0;
+}
+
+.stepLabel {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin-top: 3px;
+}
+
+.stepText {
+  font-size: 13px;
+  color: var(--text);
+  font-family: monospace;
+  word-break: break-all;
+}
+
+.compressed {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-style: italic;
+  margin-top: 3px;
+}
+
+.stepHeader {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.stepLocation {
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  color: var(--accent);
+}
+
+.stepCode {
+  display: block;
+  font-size: 12px;
+  font-family: var(--font-mono, monospace);
+  color: var(--code-text);
+  background: var(--code-bg);
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-top: 4px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.stepExplanation {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* Reachability verdict */
+.reachability {
+  margin-top: 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.reachYes {
+  color: var(--success);
+}
+
+.reachNo {
+  color: var(--danger);
+}
+
+/* Caller flow */
+.callerFlow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  margin-bottom: 16px;
+  max-width: 600px;
+}
+
+.flowNode {
+  border-radius: 6px;
+  padding: 8px 12px;
+  min-width: 160px;
+  border: 1px solid var(--border);
+}
+
+.nodeBlue {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+.nodeRed {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.nodeGray {
+  background: var(--surface);
+}
+
+.nodeRole {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin-bottom: 2px;
+}
+
+.nodeText {
+  font-size: 13px;
+  font-family: monospace;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.nodeLocation {
+  display: block;
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  color: var(--accent);
+  margin-top: 2px;
+}
+
+.nodeCode {
+  display: block;
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  color: var(--code-text);
+  background: var(--code-bg);
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-top: 4px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 60px;
+  overflow: hidden;
+}
+
+.nodeMore {
+  display: block;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+.arrow {
+  font-size: 16px;
+  color: var(--text-tertiary);
+  padding: 2px 0 2px 12px;
+  line-height: 1;
+}
+
+/* Grounded step indicator */
+.groundedChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--success);
+  opacity: 0.7;
+  margin-left: 6px;
+}
+
+.groundedChip::before {
+  content: "\2713";
+  font-size: 10px;
+}
+
+/* Gap/inferred step indicator */
+.inferredChip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+  margin-left: 6px;
+}
+
+.connectorDashed {
+  width: 2px;
+  flex: 1;
+  border-left: 2px dashed var(--border);
+  min-height: 8px;
+  background: none;
+}

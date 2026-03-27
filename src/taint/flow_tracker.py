@@ -48,7 +48,51 @@ def trace_taint_flow(
     if func_node is None:
         return None
 
+    # Try scope-tree analysis first (handles callbacks, loops)
+    if config.iteration_types or config.callback_methods:
+        result = _trace_with_scope_tree(func_node, config, file_path, sink_line, check_id, cwe_list)
+        if result is not None:
+            return result
+
+    # Fallback to flat analysis (original logic)
+    return _trace_flat(func_node, config, file_path, sink_line, check_id, cwe_list)
+
+
+def _trace_with_scope_tree(func_node, config, file_path, sink_line, check_id, cwe_list):
+    from src.taint.scope_analyzer import build_scope_tree, propagate_taint
+
+    scope_tree = build_scope_tree(func_node, config)
+    sink_vars = _find_vars_at_line(func_node, sink_line, config)
+    if not sink_vars:
+        return None
+
+    path = propagate_taint(scope_tree, set(sink_vars), sink_line, config)
+    if path is None:
+        return None
+
+    # Collect sanitizers and unresolved calls from scope tree
+    all_sans = _collect_sanitizers_from_scope(scope_tree, config)
+    deduped = _dedup_sanitizers(all_sans)
+    unresolved = _collect_unresolved_from_scope(scope_tree)
+
+    confidence_factors = []
+    if deduped:
+        confidence_factors.append(f"Sanitizer {deduped[0].name} found in path")
+    elif path[0].kind in ("parameter", "source"):
+        confidence_factors.append("Direct source to sink with no sanitizer")
+
+    inferred = infer_sink_source(check_id, cwe_list, _get_line_text(file_path, sink_line))
+
+    return TaintFlow(
+        path=path, sanitizers=deduped, unresolved_calls=unresolved,
+        confidence_factors=confidence_factors, inferred=inferred,
+    )
+
+
+def _trace_flat(func_node, config, file_path, sink_line, check_id, cwe_list):
+    """Original flat analysis — fallback when scope tree doesn't produce a result."""
     params = _extract_parameters(func_node, config)
+    param_lines = _extract_parameter_lines(func_node, config)
     deps, sanitizers, unresolved = _build_deps(func_node, config, params)
     sink_vars = _find_vars_at_line(func_node, sink_line, config)
 
@@ -58,7 +102,7 @@ def trace_taint_flow(
     # Trace backwards from each sink variable; take the first successful trace
     for sink_var in sink_vars:
         path, used_sanitizers = _trace_back(
-            sink_var, deps, sanitizers, params, config, set(),
+            sink_var, deps, sanitizers, params, config, set(), param_lines,
         )
         if path is None:
             continue
@@ -125,6 +169,69 @@ def trace_taint_flow(
     )
 
 
+def _collect_sanitizers_from_scope(scope, config=None) -> list[SanitizerInfo]:
+    """Collect sanitizer info from dep entries across the scope tree."""
+    result = []
+    conditional_types = ()
+    if config is not None:
+        conditional_types = config.conditional_types
+    for var, entries in scope.deps.items():
+        for entry in entries:
+            if entry.node is None:
+                continue
+            for n in _walk(entry.node):
+                if n.type in ("call_expression", "call"):
+                    func_ref = n.child_by_field_name("function")
+                    if func_ref:
+                        callee = func_ref.text.decode()
+                        san = check_known_sanitizer(callee)
+                        if san is None and "." in callee:
+                            san = check_known_sanitizer(callee.rsplit(".", 1)[-1])
+                        if san is not None:
+                            san.line = entry.line
+                            san.conditional = is_conditional_ancestor(
+                                entry.node, conditional_types,
+                            )
+                            result.append(san)
+    for child in scope.children:
+        result.extend(_collect_sanitizers_from_scope(child, config))
+    return result
+
+
+def _collect_unresolved_from_scope(scope, params=None) -> list[str]:
+    """Collect unresolved call names from dep entries across the scope tree."""
+    if params is None:
+        params = scope.params
+    result: list[str] = []
+    for var, entries in scope.deps.items():
+        for entry in entries:
+            if entry.node is None:
+                continue
+            for n in _walk(entry.node):
+                if n.type in ("call_expression", "call"):
+                    func_ref = n.child_by_field_name("function")
+                    if not func_ref:
+                        continue
+                    full_name = func_ref.text.decode()
+                    if "." in full_name:
+                        obj = full_name.split(".")[0]
+                        if obj not in params and full_name not in result:
+                            result.append(full_name)
+    for child in scope.children:
+        result.extend(_collect_unresolved_from_scope(child, params))
+    return result
+
+
+def _dedup_sanitizers(sanitizers):
+    seen = set()
+    result = []
+    for s in sanitizers:
+        if s.name not in seen:
+            seen.add(s.name)
+            result.append(s)
+    return result
+
+
 def _find_function_node(root: Node, name: str, config: LanguageConfig) -> Optional[Node]:
     """Find a function node by name."""
     for node in _walk(root):
@@ -150,6 +257,21 @@ def _extract_parameters(func_node: Node, config: LanguageConfig) -> set[str]:
                 if node.type == "identifier":
                     params.add(node.text.decode())
     return params
+
+
+def _extract_parameter_lines(func_node: Node, config: LanguageConfig) -> dict[str, int]:
+    """Extract parameter names with their line numbers from tree-sitter AST."""
+    result: dict[str, int] = {}
+    for child in func_node.children:
+        if child.type in config.parameter_types:
+            for node in _walk(child):
+                if node.type == "identifier":
+                    result[node.text.decode()] = node.start_point[0] + 1
+    # Arrow function single param
+    param_node = func_node.child_by_field_name("parameter")
+    if param_node and param_node.type == "identifier":
+        result[param_node.text.decode()] = param_node.start_point[0] + 1
+    return result
 
 
 # Dep entry: {"deps": set[str], "line": int, "expr": str, "node": Node, "sanitizer": SanitizerInfo|None}
@@ -329,6 +451,7 @@ def _trace_back(
     params: set[str],
     config: LanguageConfig,
     visited: set[str],
+    param_lines: dict[str, int] | None = None,
 ) -> tuple[Optional[list[FlowStep]], list[SanitizerInfo]]:
     """Recursively trace a variable back to its source.
 
@@ -341,7 +464,8 @@ def _trace_back(
 
     # Base case: parameter
     if var in params:
-        step = FlowStep(variable=var, line=0, expression=f"parameter: {var}", kind="parameter")
+        line = (param_lines or {}).get(var, 0)
+        step = FlowStep(variable=var, line=line, expression=f"parameter: {var}", kind="parameter")
         return [step], []
 
     # Base case: not in deps at all (external or builtin)
@@ -365,7 +489,7 @@ def _trace_back(
         for dep_var in dep_vars:
             if dep_var == var:
                 continue
-            sub_path, sub_sans = _trace_back(dep_var, deps, sanitizers_by_var, params, config, visited)
+            sub_path, sub_sans = _trace_back(dep_var, deps, sanitizers_by_var, params, config, visited, param_lines)
             if sub_path is not None:
                 step = FlowStep(variable=var, line=line, expression=expr, kind="assignment")
                 san_list = sanitizers_by_var.get(var, [])

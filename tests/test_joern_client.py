@@ -165,6 +165,45 @@ async def test_get_call_graph_sends_query():
     assert cg.callees == ["db_query"]
 
 
+def test_parse_taint_result_nested_parens():
+    client = JoernClient()
+    raw = 'val res1: List[String] = List("a.py:10:x = List(req.body)" -> "b.py:20:cursor.execute(x)")'
+    r = client._parse_taint_result(raw)
+    assert r.reachable is True
+    assert len(r.path) == 2
+
+
+def test_parse_taint_result_malformed_elements():
+    client = JoernClient()
+    raw = 'val res1: List[String] = List("a.py:5:source" -> "bad_element" -> "c.py:20:sink")'
+    r = client._parse_taint_result(raw)
+    assert r.reachable is True
+    assert len(r.path) == 2
+
+
+def test_parse_taint_result_non_numeric_line():
+    client = JoernClient()
+    raw = 'val res1: List[String] = List("a.py:abc:code" -> "b.py:10:sink")'
+    r = client._parse_taint_result(raw)
+    assert r.reachable is True
+    assert len(r.path) == 1
+
+
+def test_parse_taint_result_all_malformed():
+    client = JoernClient()
+    raw = 'val res1: List[String] = List("bad" -> "also_bad")'
+    r = client._parse_taint_result(raw)
+    assert r.reachable is False
+
+
+def test_parse_taint_result_unbalanced():
+    client = JoernClient()
+    raw = 'val res1: List[String] = List("a.py:1:x" -> "b.py:2:y"'
+    r = client._parse_taint_result(raw)
+    assert r.reachable is True
+    assert len(r.path) == 2
+
+
 async def test_get_call_graph_returns_empty_on_error():
     client = JoernClient()
     with patch.object(client, "_query", new_callable=AsyncMock, side_effect=RuntimeError("connection refused")):

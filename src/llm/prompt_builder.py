@@ -13,10 +13,15 @@ For each finding, consider internally:
 - Is there sanitization/escaping between source and sink?
 - Does untrusted data actually reach the vulnerable sink?
 - Can it be meaningfully exploited in this context?
+- RULE APPLICABILITY: Check the rule ID against the PROJECT CONTEXT. If the rule targets a specific framework or library (identifiable from the rule ID, e.g., "django.", "rails.", "spring.") but PROJECT CONTEXT shows a different framework, the rule is a false positive — the check is irrelevant to this codebase. Even if the underlying security concern exists, a rule designed for one framework cannot correctly detect issues in another. Mark as false_positive and explain the mismatch.
+- EXECUTION CONTEXT: Consider where this code actually runs. CI/CD configs, build scripts, and test files have different threat models than production application code. For workflow files, distinguish between expressions evaluated by the CI runner vs values injected into shell scripts.
 
 Then produce:
 - "reasoning": A natural paragraph of 3-5 sentences explaining WHY this finding is or is not a real vulnerability. Write as a security reviewer explaining to a colleague. Cite specific code patterns. Do not use section headers or labels like "SOURCE:" — just explain clearly.
 - "dataflow_analysis": A separate paragraph describing HOW data flows through the code. Trace from where data enters (parameter, request, external source) through transformations to the flagged operation. If a TRACED DATA FLOW section is in the evidence, narrate that trace in plain language. If no trace is available, describe what you can infer from the function body. If the finding is not about data flow (e.g., config issue), write "Not applicable — this finding is about configuration, not data flow."
+- "step_annotations": If GROUNDED FLOW STEPS are provided, annotate each meaningful step with a brief explanation (by 1-based index). Skip trivial assignments. If no grounded steps are provided, leave as [].
+- "gap_steps": If GROUNDED FLOW STEPS are provided and you identify gaps in the traced flow (e.g., cross-file data movement not captured, missing intermediate transformations), add gap steps. Each has: label (source/propagation/sanitizer/sink), location (file:line), code (the expression), explanation, and after_step (insert after this grounded step index; 0 = before first). If no grounded steps are provided, leave as [].
+- "flow_steps": ONLY populate this if no GROUNDED FLOW STEPS are provided (e.g., config findings, unsupported languages). Each step has: label (source/propagation/sanitizer/sink), location (file:line), code (the expression), and explanation. For config findings, return []. If grounded steps ARE provided, return [].
 
 CRITICAL: Optimize for NOT missing true vulnerabilities. Use "uncertain" when the available evidence is insufficient.
 
@@ -34,6 +39,10 @@ CONFIDENCE: 0.0 (guessing) to 1.0 (certain).
 SYSTEM_PROMPT_DATAFLOW = """You are a security engineer analyzing code dataflow. For each finding, trace how data moves through the code.
 
 Describe how data enters the code (function parameter, HTTP request, file read, etc.), what transformations it undergoes (string operations, function calls, assignments), and where it arrives at the flagged operation. Narrate the path step by step in plain language. If a TRACED DATA FLOW section is provided, use it as your guide and narrate it. If the finding is not about data flow, write "Not applicable — this finding is about configuration, not data flow."
+
+Also return "flow_steps": an array of structured steps tracing data from source to sink. Each step has label ("source", "propagation", "sanitizer", or "sink"), location (file:line), code (the expression), explanation (what happens at this step). Include at least source and sink for dataflow findings. For config/non-dataflow findings, return an empty array.
+
+If GROUNDED FLOW STEPS are provided, annotate each meaningful step via "step_annotations" (by 1-based index). Add "gap_steps" for any gaps you identify. Only populate "flow_steps" if no grounded steps are provided.
 
 Set flow_complete to true if you can trace the full path from source to sink. Set to false if there are gaps (cross-file calls, dynamic dispatch, missing caller context). List the gaps.
 
@@ -100,6 +109,10 @@ def _render_taint_flow(flow) -> str:
 
     for hop in flow.cross_file_hops:
         lines.append(f"  -> [HOP] {hop.file}:{hop.line} {hop.callee}() -> {hop.action}")
+        if hop.sub_flow and hop.sub_flow.path:
+            for step in hop.sub_flow.path[:5]:
+                tag = step.kind.upper()
+                lines.append(f"    [{tag}] {hop.file}:{step.line}: {step.expression[:60]}")
 
     if flow.sanitizers:
         san_strs = []
@@ -173,6 +186,7 @@ def build_dataflow_prompt(
     findings: list[dict],
     contexts: dict[int, FindingContext],
     max_tokens: int = 3000,
+    grounded_steps_by_finding: dict[int, list[dict]] | None = None,
 ) -> str:
     """Build Stage 1 prompt -- code context + taint trace only, no SBOM/CWE/memories."""
     max_chars = max_tokens * CHARS_PER_TOKEN
@@ -223,6 +237,25 @@ def build_dataflow_prompt(
     if finding_parts:
         parts.append("\n\n".join(finding_parts))
 
+    # Render grounded flow steps for each finding
+    if grounded_steps_by_finding:
+        grounded_parts = []
+        for finding in findings:
+            idx = finding["index"]
+            steps = grounded_steps_by_finding.get(idx, [])
+            if not steps:
+                continue
+            fnum = idx + 1
+            lines = [f"GROUNDED FLOW STEPS (Finding {fnum}):"]
+            for i, step in enumerate(steps, 1):
+                label = step["label"].upper()
+                if not step.get("grounded", True):
+                    label += ":GAP"
+                lines.append(f"  {i}. [{label}] {step['location']} — `{step['code']}`")
+            grounded_parts.append("\n".join(lines))
+        if grounded_parts:
+            parts.append("\n\n".join(grounded_parts) + "\n")
+
     prompt = "\n".join(parts)
     if len(prompt) > max_chars:
         prompt = prompt[:max_chars] + "\n\n[Context truncated]"
@@ -238,6 +271,7 @@ def build_grouped_prompt(
     profile=None,
     memories: dict[int, list[TriageMemory]] | None = None,
     dataflow_summaries: dict[int, dict] | None = None,
+    grounded_steps_by_finding: dict[int, list[dict]] | None = None,
 ) -> str:
     """Build a prompt for all findings in one file.
 
@@ -251,7 +285,7 @@ def build_grouped_prompt(
     max_chars = max_tokens * CHARS_PER_TOKEN
     parts = []
 
-    # Project context from SBOM
+    # Project context from SBOM — pass raw dependency data, let LLM reason about protections
     if profile and profile.all_deps:
         ctx_lines = []
         if profile.language:
@@ -265,24 +299,6 @@ def build_grouped_prompt(
         else:
             shown = ', '.join(profile.all_deps[:80])
             ctx_lines.append(f"Installed (first 80 of {dep_count}): {shown}")
-        if profile.security_deps:
-            ctx_lines.append(f"Security deps: {', '.join(profile.security_deps)}")
-        if not profile.has_csrf_protection:
-            ctx_lines.append("CSRF protection: NONE DETECTED")
-        else:
-            ctx_lines.append("CSRF protection: Present")
-        if profile.has_xss_protection:
-            ctx_lines.append("XSS protection: Template auto-escaping active")
-        if profile.has_sql_orm:
-            ctx_lines.append("SQL ORM: Present (parameterized queries likely)")
-        else:
-            ctx_lines.append("SQL ORM: NONE DETECTED")
-
-        # Framework-specific notes
-        notes = _framework_notes(profile)
-        if notes:
-            ctx_lines.append(f"NOTE: {notes}")
-
         parts.append("PROJECT CONTEXT (SBOM):\n" + "\n".join(ctx_lines) + "\n")
 
     # Repo map (capped at 1500 tokens)
@@ -427,6 +443,25 @@ def build_grouped_prompt(
     if finding_context_parts:
         parts.append("EVIDENCE PER FINDING:\n" + "\n\n".join(finding_context_parts) + "\n")
 
+    # Render grounded flow steps for each finding
+    if grounded_steps_by_finding:
+        grounded_parts = []
+        for finding in findings:
+            idx = finding["index"]
+            steps = grounded_steps_by_finding.get(idx, [])
+            if not steps:
+                continue
+            fnum = idx + 1
+            lines = [f"GROUNDED FLOW STEPS (Finding {fnum}):"]
+            for i, step in enumerate(steps, 1):
+                label = step["label"].upper()
+                if not step.get("grounded", True):
+                    label += ":GAP"
+                lines.append(f"  {i}. [{label}] {step['location']} — `{step['code']}`")
+            grounded_parts.append("\n".join(lines))
+        if grounded_parts:
+            parts.append("\n\n".join(grounded_parts) + "\n")
+
     # File imports — helps LLM identify security-relevant libraries in scope
     all_imports = set()
     for ctx in contexts.values():
@@ -492,15 +527,3 @@ def _file_type_hint(file_path: str) -> str:
     return ""
 
 
-def _framework_notes(profile) -> str:
-    """Generate framework-specific security notes."""
-    fw = profile.framework
-    if fw == "flask" and not profile.has_csrf_protection:
-        return "Flask does NOT include built-in CSRF protection. POST forms require Flask-WTF or manual CSRF tokens."
-    if fw == "express" and not profile.has_csrf_protection:
-        return "Express does NOT include built-in CSRF protection. Requires csurf middleware."
-    if fw == "django":
-        return "Django includes CSRF middleware and template auto-escaping by default."
-    if fw == "spring" and not profile.has_csrf_protection:
-        return "Spring does NOT include CSRF protection without Spring Security."
-    return ""

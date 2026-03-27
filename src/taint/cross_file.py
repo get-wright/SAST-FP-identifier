@@ -40,6 +40,8 @@ async def resolve_cross_file(
     max_depth: int = 3,
     visited: Optional[set[str]] = None,
     resolution_counter=None,
+    caller_file: str = "",
+    caller_line: int = 0,
 ) -> CrossFileResult:
     if visited is None:
         visited = set()
@@ -58,15 +60,28 @@ async def resolve_cross_file(
 
     try:
         resolution_counter.value += 1
-        results = await asyncio.wait_for(
-            gkg_client.search_definitions(callee_name, project_path=repo_path),
-            timeout=_TIMEOUT_PER_RESOLUTION,
-        )
 
-        if not results:
-            return CrossFileResult(action="unknown")
+        # Try precise jump-to-definition first (if caller context available)
+        defn = None
+        if caller_file and caller_line:
+            try:
+                defn = await asyncio.wait_for(
+                    gkg_client.get_definition(caller_file, caller_line, callee_name),
+                    timeout=_TIMEOUT_PER_RESOLUTION,
+                )
+            except Exception as exc:
+                logger.debug("get_definition failed for %s: %s", callee_name, exc)
 
-        defn = results[0] if isinstance(results[0], dict) else {}
+        # Fall back to search
+        if not defn or not isinstance(defn, dict) or not defn.get("file", defn.get("file_path", "")):
+            results = await asyncio.wait_for(
+                gkg_client.search_definitions(callee_name, project_path=repo_path),
+                timeout=_TIMEOUT_PER_RESOLUTION,
+            )
+            if not results:
+                return CrossFileResult(action="unknown")
+            defn = results[0] if isinstance(results[0], dict) else {}
+
         file_path = defn.get("file", defn.get("file_path", ""))
         line = defn.get("line", 0)
 

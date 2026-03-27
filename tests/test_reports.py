@@ -3,7 +3,7 @@
 import pytest
 from src.reports.annotated_json import build_annotated_json
 from src.reports.markdown_summary import build_markdown_summary
-from src.models.analysis import FindingVerdict, AnalysisResult, FileGroupResult, FindingContext, CallerInfo
+from src.models.analysis import FindingVerdict, AnalysisResult, FileGroupResult, FindingContext, CallerInfo, TaintFlow, FlowStep as AnalysisFlowStep, CrossFileHop
 
 
 SAMPLE_SEMGREP = {
@@ -203,3 +203,33 @@ def test_markdown_omits_not_applicable_dataflow():
     ])
     md = build_markdown_summary(result)
     assert "Dataflow Details" not in md
+
+
+def test_annotated_json_includes_taint_flow_in_graph_context():
+    verdicts = [FindingVerdict(
+        finding_index=0, fingerprint="fp1", verdict="true_positive", confidence=0.9, reasoning="Vuln.",
+    )]
+    flow = TaintFlow(
+        path=[
+            AnalysisFlowStep(variable="x", line=5, expression="x = input()", kind="source"),
+            AnalysisFlowStep(variable="x", line=10, expression="eval(x)", kind="sink"),
+        ],
+        sanitizers=[],
+        cross_file_hops=[CrossFileHop(callee="helper", file="utils.py", line=1, action="propagates")],
+    )
+    contexts = {
+        0: FindingContext(
+            code_snippet="eval(x)", enclosing_function="run", function_body="def run(): ...",
+            taint_flow=flow,
+        ),
+    }
+    result = build_annotated_json(
+        SAMPLE_SEMGREP, {"app.py": verdicts}, "abc123", "fpt_cloud",
+        contexts_by_file={"app.py": contexts},
+    )
+    gc = result["results"][0]["extra"]["x_fp_analysis"]["graph_context"]
+    assert "taint_flow" in gc
+    assert len(gc["taint_flow"]["path"]) == 2
+    assert gc["taint_flow"]["path"][0]["variable"] == "x"
+    assert len(gc["taint_flow"]["cross_file_hops"]) == 1
+    assert gc["taint_flow"]["cross_file_hops"][0]["callee"] == "helper"

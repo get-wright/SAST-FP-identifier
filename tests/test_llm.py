@@ -263,3 +263,54 @@ def test_verdict_only_schema():
     v = VerdictOnlyOutput(finding_index=1, reasoning="SQL injection is real.", verdict="true_positive", confidence=0.95)
     batch = VerdictOnlyBatch(verdicts=[v])
     assert batch.verdicts[0].verdict == "true_positive"
+
+
+# --- Structured Output: reasoning model content block handling ---
+
+
+def test_extract_text_content_plain_string():
+    from src.llm.structured_output import _extract_text_content
+
+    class FakeResponse:
+        content = '{"verdicts": []}'
+
+    assert _extract_text_content(FakeResponse()) == '{"verdicts": []}'
+
+
+def test_extract_text_content_reasoning_blocks():
+    from src.llm.structured_output import _extract_text_content
+
+    class FakeResponse:
+        content = [
+            {"type": "thinking", "thinking": "Let me analyze this..."},
+            {"type": "text", "text": '{"verdicts": [{"finding_index": 1}]}'},
+        ]
+
+    result = _extract_text_content(FakeResponse())
+    assert '{"verdicts"' in result
+    assert "thinking" not in result.lower() or "Let me analyze" not in result
+
+
+def test_extract_text_content_list_of_strings():
+    from src.llm.structured_output import _extract_text_content
+
+    class FakeResponse:
+        content = ["first part", "second part"]
+
+    result = _extract_text_content(FakeResponse())
+    assert "first part" in result
+    assert "second part" in result
+
+
+def test_extract_text_content_object_with_text_attr():
+    from src.llm.structured_output import _extract_text_content
+
+    class ContentBlock:
+        def __init__(self, text):
+            self.text = text
+
+    class FakeResponse:
+        content = [ContentBlock('{"verdicts": []}')]
+
+    result = _extract_text_content(FakeResponse())
+    assert '{"verdicts"' in result

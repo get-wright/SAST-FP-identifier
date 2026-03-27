@@ -26,6 +26,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY src/ src/
 COPY frontend/ frontend/
+# Build frontend
+WORKDIR /app/frontend
+RUN npm install && npm run build
+WORKDIR /app
 COPY run.py .
 
 # Persistent volumes for cloned repos and analysis cache

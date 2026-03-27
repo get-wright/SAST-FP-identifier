@@ -372,6 +372,72 @@ def test_taint_flow_boosts_evidence_score():
     assert score >= 0.80
 
 
+def test_grounded_steps_merged_into_verdicts():
+    """Verify grounded flow steps from TaintFlow merge with LLM annotations."""
+    from src.models.analysis import FindingContext, TaintFlow, FlowStep as AnalysisFlowStep
+    from src.core.orchestrator import _merge_grounded_and_llm
+    from src.core.flow_grounding import ground_flow_steps
+
+    ctx = FindingContext(
+        code_snippet="cursor.execute(query)",
+        enclosing_function="index",
+        function_body="def index(): ...",
+        taint_flow=TaintFlow(path=[
+            AnalysisFlowStep(variable="q", line=5, expression="q = request.args.get('q')", kind="parameter"),
+            AnalysisFlowStep(variable="query", line=10, expression="query = 'SELECT ' + q", kind="assignment"),
+            AnalysisFlowStep(variable="query", line=15, expression="cursor.execute(query)", kind="sink"),
+        ]),
+    )
+
+    grounded = ground_flow_steps(ctx.taint_flow, "app.py")
+    assert len(grounded) == 3
+    assert grounded[0]["grounded"] is True
+    assert grounded[0]["label"] == "source"
+
+    llm_response = {
+        "step_annotations": [
+            {"step_index": 1, "explanation": "User input enters via query parameter"},
+            {"step_index": 3, "explanation": "Unsanitized input reaches SQL execution"},
+        ],
+        "gap_steps": [],
+    }
+
+    merged = _merge_grounded_and_llm(grounded, llm_response)
+    assert len(merged) == 3
+    assert merged[0]["explanation"] == "User input enters via query parameter"
+    assert merged[0]["grounded"] is True
+    assert merged[1]["explanation"] == ""  # step 2 not annotated
+    assert merged[2]["explanation"] == "Unsanitized input reaches SQL execution"
+
+
+def test_merge_with_gap_steps():
+    from src.core.orchestrator import _merge_grounded_and_llm
+
+    grounded = [
+        {"label": "source", "location": "a.py:5", "code": "x = input()", "explanation": "", "grounded": True},
+        {"label": "sink", "location": "a.py:20", "code": "eval(x)", "explanation": "", "grounded": True},
+    ]
+    llm_response = {
+        "step_annotations": [],
+        "gap_steps": [
+            {"label": "propagation", "location": "b.py:10", "code": "process(x)", "explanation": "Cross-file transform", "after_step": 1},
+        ],
+    }
+    merged = _merge_grounded_and_llm(grounded, llm_response)
+    assert len(merged) == 3
+    assert merged[0]["grounded"] is True
+    assert merged[1]["grounded"] is False
+    assert merged[1]["location"] == "b.py:10"
+    assert merged[2]["grounded"] is True
+
+
+def test_merge_empty_grounded_returns_empty():
+    from src.core.orchestrator import _merge_grounded_and_llm
+
+    merged = _merge_grounded_and_llm([], {"step_annotations": [], "gap_steps": []})
+    assert merged == []
+
+
 def test_taint_flow_sanitizer_lowers_evidence():
     from src.core.orchestrator import _base_evidence
     from src.models.analysis import FindingContext, FlowStep, SanitizerInfo, TaintFlow
