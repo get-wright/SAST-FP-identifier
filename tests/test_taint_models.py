@@ -160,3 +160,21 @@ def test_cross_file_hop_unchanged():
     d = h.to_dict()
     assert d["callee"] == "helper"
     assert d["sub_flow"] is None
+
+
+from src.taint.parser_protocol import ASTNode, LanguageGrammar, Parser
+
+
+def test_language_grammar_protocol_has_required_fields():
+    """LanguageGrammar protocol defines expected fields."""
+    import typing
+
+    hints = typing.get_type_hints(LanguageGrammar)
+    assert "func_types" in hints
+    assert "call_types" in hints
+    assert "assignment_types" in hints
+    assert "parameter_types" in hints
+    assert "return_types" in hints
+    assert "conditional_types" in hints
+    assert "member_access_types" in hints
+    assert "has_arrow_functions" in hints
