@@ -414,9 +414,10 @@ def _trace_back(
 
     defs = active.reaching(var)
 
-    # Handle dotted names: if "obj.field" has no defs, try "obj.field" literally
+    # Handle dotted names: if "obj.field" has no defs, try base "obj"
     if not defs and "." in var:
-        defs = active.reaching(var)
+        base = var.split(".")[0]
+        defs = active.reaching(base)
 
     if not defs:
         return None
