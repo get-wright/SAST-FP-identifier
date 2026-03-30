@@ -232,8 +232,8 @@ def _build_deps(
             else:
                 # Check if it's an unresolved external call
                 # (not a method on a known variable, not a builtin)
-                if callee not in params and "." in _get_full_callee(call_node, config):
-                    full = _get_full_callee(call_node, config)
+                full = _get_full_callee(call_node, config)
+                if callee not in params and "." in full:
                     # Check if the object is a parameter — that makes it "known"
                     obj = full.split(".")[0]
                     if obj not in params:
@@ -465,14 +465,6 @@ def _get_line_text(file_path: str, line: int) -> str:
     except OSError:
         pass
     return ""
-
-
-def _param_names_from_dangerous(config: LanguageConfig) -> set[str]:
-    """Extract base object names from dangerous_sources patterns."""
-    names: set[str] = set()
-    for ds in config.dangerous_sources:
-        names.add(ds.split(".")[0])
-    return names
 
 
 def _sanitizer_target_vars(

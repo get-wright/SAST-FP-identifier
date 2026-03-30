@@ -239,7 +239,9 @@ def test_tree_sitter_reader_public_accessors():
 def test_python_config_has_member_access_and_sinks(reader):
     config = reader.get_config(".py")
     assert "attribute" in config.member_access_types
-    assert "data" in config.dangerous_sinks
+    assert (
+        len(config.dangerous_sinks) == 0
+    )  # Python sinks are method calls, not property assignments
 
 
 def test_js_config_has_member_access_and_sinks(reader):
