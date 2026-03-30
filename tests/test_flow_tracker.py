@@ -150,3 +150,77 @@ def test_multiline_call_js():
     assert flow is not None, "Flow should not be None for multi-line JS call"
     assert len(flow.path) >= 2
     assert flow.source.variable == "userInput"
+
+
+def test_js_innerhtml_sink_from_param():
+    """Assignment to innerHTML should be detected as a sink."""
+    flow = trace_taint_flow(
+        file_path=os.path.join(FIXTURES, "taint_sample.js"),
+        function_name="innerHtmlSink",
+        sink_line=24,
+        check_id="javascript.xss",
+        cwe_list=["CWE-79"],
+    )
+    assert flow is not None, "innerHTML assignment should be detected as sink"
+    assert len(flow.path) >= 2
+    assert flow.source.kind == "parameter"
+    assert flow.sink.kind == "sink"
+
+
+def test_js_innerhtml_with_sanitizer():
+    """innerHTML assignment with escapeHtml should detect the sanitizer."""
+    flow = trace_taint_flow(
+        file_path=os.path.join(FIXTURES, "taint_sample.js"),
+        function_name="innerHtmlSanitized",
+        sink_line=29,
+        check_id="javascript.xss",
+        cwe_list=["CWE-79"],
+    )
+    assert flow is not None
+    assert len(flow.sanitizers) >= 1
+    assert flow.sanitizers[0].name == "escapeHtml"
+
+
+def test_js_href_sink():
+    """Assignment to .href should be detected as a sink."""
+    flow = trace_taint_flow(
+        file_path=os.path.join(FIXTURES, "taint_sample.js"),
+        function_name="hrefSink",
+        sink_line=34,
+        check_id="javascript.redirect",
+        cwe_list=["CWE-601"],
+    )
+    assert flow is not None
+    assert len(flow.path) >= 2
+    assert flow.source.kind == "parameter"
+
+
+def test_js_hardcoded_innerhtml_no_taint_source():
+    """innerHTML with hardcoded SVG — svg is a string literal in the function,
+    not a parameter or dangerous source. Should report 'no external source'."""
+    flow = trace_taint_flow(
+        file_path=os.path.join(FIXTURES, "taint_sample.js"),
+        function_name="hardcodedInnerHtml",
+        sink_line=39,
+        check_id="javascript.xss",
+        cwe_list=["CWE-79"],
+    )
+    assert flow is not None, "Should still produce a flow (with sink-only path)"
+    assert any(
+        "hardcoded" in f.lower() or "no external" in f.lower()
+        for f in flow.confidence_factors
+    )
+
+
+def test_python_response_data_sink():
+    """Assignment to response.data should be detected as a sink in Python."""
+    flow = trace_taint_flow(
+        file_path=os.path.join(FIXTURES, "taint_sample.py"),
+        function_name="response_data_sink",
+        sink_line=48,
+        check_id="python.xss",
+        cwe_list=["CWE-79"],
+    )
+    assert flow is not None, "response.data assignment should be detected"
+    assert len(flow.path) >= 2
+    assert flow.source.kind in ("parameter", "source")

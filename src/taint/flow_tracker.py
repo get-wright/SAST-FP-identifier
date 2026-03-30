@@ -307,25 +307,43 @@ def _get_full_callee(call_node: Node, config: LanguageConfig) -> str:
     return func_ref.text.decode()
 
 
+def _get_member_property_name(member_node: Node, config: LanguageConfig) -> str:
+    """Extract the property name from a member-access node.
+
+    Handles cross-language differences in field naming:
+    - Python attribute: field "attribute" (identifier)
+    - JS member_expression: field "property" (property_identifier)
+    - Go selector_expression: field "field" (field_identifier)
+    - Java field_access: field "field" (identifier)
+    """
+    for field_name in ("property", "attribute", "field"):
+        prop = member_node.child_by_field_name(field_name)
+        if prop is not None:
+            return prop.text.decode()
+    return ""
+
+
 def _find_vars_at_line(func_node: Node, line: int, config: LanguageConfig) -> list[str]:
     """Find variable identifiers used at a specific line.
 
-    Checks call arguments and return statements. For call expressions,
-    uses range matching (start_point to end_point) because Semgrep may
-    report any line within a multi-line call, not just the first line.
+    Checks three patterns:
+    1. Call arguments (range match for multi-line calls)
+    2. Return statements (exact line match)
+    3. Assignment to dangerous sink properties (exact line match)
     """
     row = line - 1  # tree-sitter uses 0-indexed rows
     variables: list[str] = []
     call_types = set(config.call_types)
+    member_types = set(config.member_access_types)
+    sink_names = set(config.dangerous_sinks)
 
+    # Pass 1: Call arguments (range match for multi-line calls)
     for node in _walk(func_node):
-        # Range match: the reported line falls anywhere within this call node
         if node.type in call_types and node.start_point[0] <= row <= node.end_point[0]:
             args_node = node.child_by_field_name(
                 "arguments"
             ) or node.child_by_field_name("argument_list")
             if args_node is None:
-                # Python call uses argument_list as a child type
                 for child in node.children:
                     if child.type == "argument_list":
                         args_node = child
@@ -335,8 +353,7 @@ def _find_vars_at_line(func_node: Node, line: int, config: LanguageConfig) -> li
                     if child.type == "identifier":
                         variables.append(child.text.decode())
 
-    # Also check for return statements at that line (exact match is fine —
-    # return statements are single-line in practice)
+    # Pass 2: Return statements (exact line match)
     for node in _walk(func_node):
         if node.start_point[0] != row:
             continue
@@ -344,6 +361,31 @@ def _find_vars_at_line(func_node: Node, line: int, config: LanguageConfig) -> li
             for child in _walk(node):
                 if child.type == "identifier":
                     variables.append(child.text.decode())
+
+    # Pass 3: Assignment to dangerous sink properties
+    # Detects: obj.innerHTML = value, response.data = value, etc.
+    if member_types and sink_names:
+        for node in _walk(func_node):
+            if node.type not in config.assignment_types:
+                continue
+            if not (node.start_point[0] <= row <= node.end_point[0]):
+                continue
+
+            lhs = node.child_by_field_name("left")
+            rhs = node.child_by_field_name("right")
+            if lhs is None or rhs is None:
+                continue
+            if lhs.type not in member_types:
+                continue
+
+            # Extract the property name from the member access LHS
+            prop_name = _get_member_property_name(lhs, config)
+            if prop_name and prop_name in sink_names:
+                # This is an assignment to a dangerous sink property.
+                # Extract identifiers from the RHS as sink variables.
+                for child in _walk(rhs):
+                    if child.type == "identifier":
+                        variables.append(child.text.decode())
 
     # Deduplicate preserving order
     seen: set[str] = set()

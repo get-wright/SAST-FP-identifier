@@ -40,3 +40,9 @@ def multiline_call(request):
         timeout=5,
         headers={"Accept": "application/json"},
     )
+
+
+def response_data_sink(request):
+    user_input = request.args.get("data")
+    response = make_response()
+    response.data = user_input

@@ -26,142 +26,455 @@ logger = logging.getLogger(__name__)
 # No scattered if/elif branches needed.
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class LanguageConfig:
     """Everything the reader needs to handle one language."""
-    func_types: list[str]                          # AST node types for functions/methods
+
+    func_types: list[str]  # AST node types for functions/methods
     call_types: list[str] = field(default_factory=lambda: ["call_expression"])
-    import_type: str = ""                          # top-level import node type
-    import_source_field: str = ""                  # field name for import source string
-    import_style: str = "none"                     # "python", "js", "ruby", "rust", "go", "java", "none"
-    has_arrow_functions: bool = False               # needs parent variable_declarator lookup
-    lazy_module: str = ""                          # module to import lazily (empty = already imported)
-    lazy_func: str = "language"                    # function name on the module
+    import_type: str = ""  # top-level import node type
+    import_source_field: str = ""  # field name for import source string
+    import_style: str = "none"  # "python", "js", "ruby", "rust", "go", "java", "none"
+    has_arrow_functions: bool = False  # needs parent variable_declarator lookup
+    lazy_module: str = ""  # module to import lazily (empty = already imported)
+    lazy_func: str = "language"  # function name on the module
     # Taint-specific fields (empty = language does not support flow tracking)
     assignment_types: tuple[str, ...] = ()
     parameter_types: tuple[str, ...] = ()
     return_types: tuple[str, ...] = ()
     conditional_types: tuple[str, ...] = ()
     dangerous_sources: tuple[str, ...] = ()
+    # Member-access assignment sink detection
+    member_access_types: tuple[
+        str, ...
+    ] = ()  # AST node types for property access on LHS
+    dangerous_sinks: tuple[str, ...] = ()  # Property names that are security sinks
 
 
 # Core languages (always imported)
 _LANG_REGISTRY: dict[str, tuple[object, LanguageConfig]] = {
-    ".py": (ts_python, LanguageConfig(
-        func_types=["function_definition"],
-        call_types=["call"],
-        import_style="python",
-        assignment_types=("assignment", "augmented_assignment"),
-        parameter_types=("parameters",),
-        return_types=("return_statement",),
-        conditional_types=("if_statement", "try_statement", "elif_clause", "else_clause"),
-        dangerous_sources=("request.args", "request.form", "request.json", "request.data",
-                           "os.environ", "sys.argv", "input()", "request.GET", "request.POST"),
-    )),
-    ".js": (ts_javascript, LanguageConfig(
-        func_types=["function_declaration", "arrow_function", "method_definition"],
-        call_types=["call_expression"],
-        import_style="js",
-        has_arrow_functions=True,
-        assignment_types=("assignment_expression", "variable_declarator", "augmented_assignment_expression"),
-        parameter_types=("formal_parameters",),
-        return_types=("return_statement",),
-        conditional_types=("if_statement", "try_statement", "switch_statement", "ternary_expression"),
-        dangerous_sources=("req.body", "req.query", "req.params", "req.headers",
-                           "document.location", "window.location", "process.env"),
-    )),
-    ".jsx": (ts_javascript, LanguageConfig(
-        func_types=["function_declaration", "arrow_function", "method_definition"],
-        call_types=["call_expression"],
-        import_style="js",
-        has_arrow_functions=True,
-        assignment_types=("assignment_expression", "variable_declarator", "augmented_assignment_expression"),
-        parameter_types=("formal_parameters",),
-        return_types=("return_statement",),
-        conditional_types=("if_statement", "try_statement", "switch_statement", "ternary_expression"),
-        dangerous_sources=("req.body", "req.query", "req.params", "req.headers",
-                           "document.location", "window.location", "process.env"),
-    )),
-    ".ts": (language_typescript, LanguageConfig(
-        func_types=["function_declaration", "arrow_function", "method_definition"],
-        call_types=["call_expression"],
-        import_style="js",
-        has_arrow_functions=True,
-        assignment_types=("assignment_expression", "variable_declarator", "augmented_assignment_expression"),
-        parameter_types=("formal_parameters",),
-        return_types=("return_statement",),
-        conditional_types=("if_statement", "try_statement", "switch_statement", "ternary_expression"),
-        dangerous_sources=("req.body", "req.query", "req.params", "req.headers",
-                           "document.location", "window.location", "process.env"),
-    )),
-    ".tsx": (language_tsx, LanguageConfig(
-        func_types=["function_declaration", "arrow_function", "method_definition"],
-        call_types=["call_expression"],
-        import_style="js",
-        has_arrow_functions=True,
-        assignment_types=("assignment_expression", "variable_declarator", "augmented_assignment_expression"),
-        parameter_types=("formal_parameters",),
-        return_types=("return_statement",),
-        conditional_types=("if_statement", "try_statement", "switch_statement", "ternary_expression"),
-        dangerous_sources=("req.body", "req.query", "req.params", "req.headers",
-                           "document.location", "window.location", "process.env"),
-    )),
-    ".go": (ts_go, LanguageConfig(
-        func_types=["function_declaration", "method_declaration"],
-        call_types=["call_expression"],
-        import_style="go",
-        assignment_types=("short_var_declaration", "assignment_statement"),
-        parameter_types=("parameter_list",),
-        return_types=("return_statement",),
-        conditional_types=("if_statement", "switch_statement"),
-        dangerous_sources=("r.URL.Query", "r.FormValue", "r.Body", "os.Getenv", "os.Args"),
-    )),
-    ".java": (ts_java, LanguageConfig(
-        func_types=["method_declaration", "constructor_declaration"],
-        call_types=["call_expression"],
-        import_style="java",
-        assignment_types=("assignment_expression", "variable_declarator", "local_variable_declaration"),
-        parameter_types=("formal_parameters",),
-        return_types=("return_statement",),
-        conditional_types=("if_statement", "try_statement", "switch_expression"),
-        dangerous_sources=("request.getParameter", "request.getAttribute", "request.getHeader",
-                           "System.getenv", "System.getProperty"),
-    )),
-    ".php": (ts_php, LanguageConfig(
-        func_types=["function_definition", "method_declaration"],
-        call_types=["function_call_expression", "member_call_expression"],
-        import_style="none",
-    )),
-    ".rb": (ts_ruby, LanguageConfig(
-        func_types=["method", "singleton_method"],
-        call_types=["call", "method_call"],
-        import_style="ruby",
-    )),
+    ".py": (
+        ts_python,
+        LanguageConfig(
+            func_types=["function_definition"],
+            call_types=["call"],
+            import_style="python",
+            assignment_types=("assignment", "augmented_assignment"),
+            parameter_types=("parameters",),
+            return_types=("return_statement",),
+            conditional_types=(
+                "if_statement",
+                "try_statement",
+                "elif_clause",
+                "else_clause",
+            ),
+            dangerous_sources=(
+                "request.args",
+                "request.form",
+                "request.json",
+                "request.data",
+                "os.environ",
+                "sys.argv",
+                "input()",
+                "request.GET",
+                "request.POST",
+            ),
+            member_access_types=("attribute",),
+            dangerous_sinks=(
+                "data",
+                "content",
+            ),
+        ),
+    ),
+    ".js": (
+        ts_javascript,
+        LanguageConfig(
+            func_types=["function_declaration", "arrow_function", "method_definition"],
+            call_types=["call_expression"],
+            import_style="js",
+            has_arrow_functions=True,
+            assignment_types=(
+                "assignment_expression",
+                "variable_declarator",
+                "augmented_assignment_expression",
+            ),
+            parameter_types=("formal_parameters",),
+            return_types=("return_statement",),
+            conditional_types=(
+                "if_statement",
+                "try_statement",
+                "switch_statement",
+                "ternary_expression",
+            ),
+            dangerous_sources=(
+                "req.body",
+                "req.query",
+                "req.params",
+                "req.headers",
+                "document.location",
+                "window.location",
+                "process.env",
+            ),
+            member_access_types=("member_expression",),
+            dangerous_sinks=(
+                "innerHTML",
+                "outerHTML",
+                "srcdoc",
+                "src",
+                "href",
+                "action",
+                "formAction",
+                "onclick",
+                "onerror",
+                "onload",
+                "onmouseover",
+                "onfocus",
+                "onblur",
+                "onsubmit",
+                "onchange",
+                "onkeydown",
+                "onkeyup",
+                "onkeypress",
+                "cssText",
+                "data",
+                "codebase",
+                "location",
+            ),
+        ),
+    ),
+    ".jsx": (
+        ts_javascript,
+        LanguageConfig(
+            func_types=["function_declaration", "arrow_function", "method_definition"],
+            call_types=["call_expression"],
+            import_style="js",
+            has_arrow_functions=True,
+            assignment_types=(
+                "assignment_expression",
+                "variable_declarator",
+                "augmented_assignment_expression",
+            ),
+            parameter_types=("formal_parameters",),
+            return_types=("return_statement",),
+            conditional_types=(
+                "if_statement",
+                "try_statement",
+                "switch_statement",
+                "ternary_expression",
+            ),
+            dangerous_sources=(
+                "req.body",
+                "req.query",
+                "req.params",
+                "req.headers",
+                "document.location",
+                "window.location",
+                "process.env",
+            ),
+            member_access_types=("member_expression",),
+            dangerous_sinks=(
+                "innerHTML",
+                "outerHTML",
+                "srcdoc",
+                "src",
+                "href",
+                "action",
+                "formAction",
+                "onclick",
+                "onerror",
+                "onload",
+                "onmouseover",
+                "onfocus",
+                "onblur",
+                "onsubmit",
+                "onchange",
+                "onkeydown",
+                "onkeyup",
+                "onkeypress",
+                "cssText",
+                "data",
+                "codebase",
+                "location",
+            ),
+        ),
+    ),
+    ".ts": (
+        language_typescript,
+        LanguageConfig(
+            func_types=["function_declaration", "arrow_function", "method_definition"],
+            call_types=["call_expression"],
+            import_style="js",
+            has_arrow_functions=True,
+            assignment_types=(
+                "assignment_expression",
+                "variable_declarator",
+                "augmented_assignment_expression",
+            ),
+            parameter_types=("formal_parameters",),
+            return_types=("return_statement",),
+            conditional_types=(
+                "if_statement",
+                "try_statement",
+                "switch_statement",
+                "ternary_expression",
+            ),
+            dangerous_sources=(
+                "req.body",
+                "req.query",
+                "req.params",
+                "req.headers",
+                "document.location",
+                "window.location",
+                "process.env",
+            ),
+            member_access_types=("member_expression",),
+            dangerous_sinks=(
+                "innerHTML",
+                "outerHTML",
+                "srcdoc",
+                "src",
+                "href",
+                "action",
+                "formAction",
+                "onclick",
+                "onerror",
+                "onload",
+                "onmouseover",
+                "onfocus",
+                "onblur",
+                "onsubmit",
+                "onchange",
+                "onkeydown",
+                "onkeyup",
+                "onkeypress",
+                "cssText",
+                "data",
+                "codebase",
+                "location",
+            ),
+        ),
+    ),
+    ".tsx": (
+        language_tsx,
+        LanguageConfig(
+            func_types=["function_declaration", "arrow_function", "method_definition"],
+            call_types=["call_expression"],
+            import_style="js",
+            has_arrow_functions=True,
+            assignment_types=(
+                "assignment_expression",
+                "variable_declarator",
+                "augmented_assignment_expression",
+            ),
+            parameter_types=("formal_parameters",),
+            return_types=("return_statement",),
+            conditional_types=(
+                "if_statement",
+                "try_statement",
+                "switch_statement",
+                "ternary_expression",
+            ),
+            dangerous_sources=(
+                "req.body",
+                "req.query",
+                "req.params",
+                "req.headers",
+                "document.location",
+                "window.location",
+                "process.env",
+            ),
+            member_access_types=("member_expression",),
+            dangerous_sinks=(
+                "innerHTML",
+                "outerHTML",
+                "srcdoc",
+                "src",
+                "href",
+                "action",
+                "formAction",
+                "onclick",
+                "onerror",
+                "onload",
+                "onmouseover",
+                "onfocus",
+                "onblur",
+                "onsubmit",
+                "onchange",
+                "onkeydown",
+                "onkeyup",
+                "onkeypress",
+                "cssText",
+                "data",
+                "codebase",
+                "location",
+            ),
+        ),
+    ),
+    ".go": (
+        ts_go,
+        LanguageConfig(
+            func_types=["function_declaration", "method_declaration"],
+            call_types=["call_expression"],
+            import_style="go",
+            assignment_types=("short_var_declaration", "assignment_statement"),
+            parameter_types=("parameter_list",),
+            return_types=("return_statement",),
+            conditional_types=("if_statement", "switch_statement"),
+            dangerous_sources=(
+                "r.URL.Query",
+                "r.FormValue",
+                "r.Body",
+                "os.Getenv",
+                "os.Args",
+            ),
+            member_access_types=("selector_expression",),
+            dangerous_sinks=(),
+        ),
+    ),
+    ".java": (
+        ts_java,
+        LanguageConfig(
+            func_types=["method_declaration", "constructor_declaration"],
+            call_types=["call_expression"],
+            import_style="java",
+            assignment_types=(
+                "assignment_expression",
+                "variable_declarator",
+                "local_variable_declaration",
+            ),
+            parameter_types=("formal_parameters",),
+            return_types=("return_statement",),
+            conditional_types=("if_statement", "try_statement", "switch_expression"),
+            dangerous_sources=(
+                "request.getParameter",
+                "request.getAttribute",
+                "request.getHeader",
+                "System.getenv",
+                "System.getProperty",
+            ),
+            member_access_types=("field_access",),
+            dangerous_sinks=(),
+        ),
+    ),
+    ".php": (
+        ts_php,
+        LanguageConfig(
+            func_types=["function_definition", "method_declaration"],
+            call_types=["function_call_expression", "member_call_expression"],
+            import_style="none",
+        ),
+    ),
+    ".rb": (
+        ts_ruby,
+        LanguageConfig(
+            func_types=["method", "singleton_method"],
+            call_types=["call", "method_call"],
+            import_style="ruby",
+        ),
+    ),
 }
 
 # Optional languages (lazy-imported on first use to avoid hard dependency)
 _OPTIONAL_REGISTRY: dict[str, LanguageConfig] = {
-    ".rs": LanguageConfig(func_types=["function_item"], call_types=["call_expression"], import_style="rust", lazy_module="tree_sitter_rust"),
-    ".c": LanguageConfig(func_types=["function_definition"], call_types=["call_expression"], lazy_module="tree_sitter_c"),
-    ".h": LanguageConfig(func_types=["function_definition"], call_types=["call_expression"], lazy_module="tree_sitter_c"),
-    ".cpp": LanguageConfig(func_types=["function_definition"], call_types=["call_expression"], lazy_module="tree_sitter_cpp"),
-    ".cc": LanguageConfig(func_types=["function_definition"], call_types=["call_expression"], lazy_module="tree_sitter_cpp"),
-    ".cxx": LanguageConfig(func_types=["function_definition"], call_types=["call_expression"], lazy_module="tree_sitter_cpp"),
-    ".hpp": LanguageConfig(func_types=["function_definition"], call_types=["call_expression"], lazy_module="tree_sitter_cpp"),
-    ".cs": LanguageConfig(func_types=["method_declaration", "constructor_declaration"], call_types=["call_expression"], lazy_module="tree_sitter_c_sharp"),
-    ".kt": LanguageConfig(func_types=["function_declaration"], call_types=["call_expression"], lazy_module="tree_sitter_kotlin"),
-    ".kts": LanguageConfig(func_types=["function_declaration"], call_types=["call_expression"], lazy_module="tree_sitter_kotlin"),
-    ".scala": LanguageConfig(func_types=["function_definition"], call_types=["call_expression"], lazy_module="tree_sitter_scala"),
-    ".sc": LanguageConfig(func_types=["function_definition"], call_types=["call_expression"], lazy_module="tree_sitter_scala"),
-    ".swift": LanguageConfig(func_types=["function_declaration"], call_types=["call_expression"], lazy_module="tree_sitter_swift"),
-    ".sh": LanguageConfig(func_types=["function_definition"], call_types=["command"], lazy_module="tree_sitter_bash"),
-    ".bash": LanguageConfig(func_types=["function_definition"], call_types=["command"], lazy_module="tree_sitter_bash"),
-    ".hs": LanguageConfig(func_types=["function"], call_types=["function_application"], lazy_module="tree_sitter_haskell"),
-    ".ex": LanguageConfig(func_types=["call"], call_types=["call"], lazy_module="tree_sitter_elixir"),
-    ".exs": LanguageConfig(func_types=["call"], call_types=["call"], lazy_module="tree_sitter_elixir"),
-    ".lua": LanguageConfig(func_types=["function_declaration"], call_types=["function_call"], lazy_module="tree_sitter_lua"),
-    ".html": LanguageConfig(func_types=[], call_types=[], lazy_module="tree_sitter_html"),
-    ".htm": LanguageConfig(func_types=[], call_types=[], lazy_module="tree_sitter_html"),
+    ".rs": LanguageConfig(
+        func_types=["function_item"],
+        call_types=["call_expression"],
+        import_style="rust",
+        lazy_module="tree_sitter_rust",
+    ),
+    ".c": LanguageConfig(
+        func_types=["function_definition"],
+        call_types=["call_expression"],
+        lazy_module="tree_sitter_c",
+    ),
+    ".h": LanguageConfig(
+        func_types=["function_definition"],
+        call_types=["call_expression"],
+        lazy_module="tree_sitter_c",
+    ),
+    ".cpp": LanguageConfig(
+        func_types=["function_definition"],
+        call_types=["call_expression"],
+        lazy_module="tree_sitter_cpp",
+    ),
+    ".cc": LanguageConfig(
+        func_types=["function_definition"],
+        call_types=["call_expression"],
+        lazy_module="tree_sitter_cpp",
+    ),
+    ".cxx": LanguageConfig(
+        func_types=["function_definition"],
+        call_types=["call_expression"],
+        lazy_module="tree_sitter_cpp",
+    ),
+    ".hpp": LanguageConfig(
+        func_types=["function_definition"],
+        call_types=["call_expression"],
+        lazy_module="tree_sitter_cpp",
+    ),
+    ".cs": LanguageConfig(
+        func_types=["method_declaration", "constructor_declaration"],
+        call_types=["call_expression"],
+        lazy_module="tree_sitter_c_sharp",
+    ),
+    ".kt": LanguageConfig(
+        func_types=["function_declaration"],
+        call_types=["call_expression"],
+        lazy_module="tree_sitter_kotlin",
+    ),
+    ".kts": LanguageConfig(
+        func_types=["function_declaration"],
+        call_types=["call_expression"],
+        lazy_module="tree_sitter_kotlin",
+    ),
+    ".scala": LanguageConfig(
+        func_types=["function_definition"],
+        call_types=["call_expression"],
+        lazy_module="tree_sitter_scala",
+    ),
+    ".sc": LanguageConfig(
+        func_types=["function_definition"],
+        call_types=["call_expression"],
+        lazy_module="tree_sitter_scala",
+    ),
+    ".swift": LanguageConfig(
+        func_types=["function_declaration"],
+        call_types=["call_expression"],
+        lazy_module="tree_sitter_swift",
+    ),
+    ".sh": LanguageConfig(
+        func_types=["function_definition"],
+        call_types=["command"],
+        lazy_module="tree_sitter_bash",
+    ),
+    ".bash": LanguageConfig(
+        func_types=["function_definition"],
+        call_types=["command"],
+        lazy_module="tree_sitter_bash",
+    ),
+    ".hs": LanguageConfig(
+        func_types=["function"],
+        call_types=["function_application"],
+        lazy_module="tree_sitter_haskell",
+    ),
+    ".ex": LanguageConfig(
+        func_types=["call"], call_types=["call"], lazy_module="tree_sitter_elixir"
+    ),
+    ".exs": LanguageConfig(
+        func_types=["call"], call_types=["call"], lazy_module="tree_sitter_elixir"
+    ),
+    ".lua": LanguageConfig(
+        func_types=["function_declaration"],
+        call_types=["function_call"],
+        lazy_module="tree_sitter_lua",
+    ),
+    ".html": LanguageConfig(
+        func_types=[], call_types=[], lazy_module="tree_sitter_html"
+    ),
+    ".htm": LanguageConfig(
+        func_types=[], call_types=[], lazy_module="tree_sitter_html"
+    ),
     ".css": LanguageConfig(func_types=[], call_types=[], lazy_module="tree_sitter_css"),
 }
 
@@ -203,21 +516,23 @@ class TreeSitterReader:
             if callable(lang_mod_or_fn) and not isinstance(lang_mod_or_fn, type):
                 lang_fn = lang_mod_or_fn
             else:
-                lang_fn = (
-                    getattr(lang_mod_or_fn, "language", None)
-                    or getattr(lang_mod_or_fn, "language_php", None)
+                lang_fn = getattr(lang_mod_or_fn, "language", None) or getattr(
+                    lang_mod_or_fn, "language_php", None
                 )
         elif ext in _OPTIONAL_REGISTRY:
             config = _OPTIONAL_REGISTRY[ext]
             try:
                 import importlib
+
                 mod = importlib.import_module(config.lazy_module)
                 lang_fn = getattr(mod, config.lazy_func, None)
                 if lang_fn:
                     # Promote to core registry for future lookups
                     _LANG_REGISTRY[ext] = (lang_fn, config)
             except ImportError:
-                logger.debug("Optional language package %s not installed", config.lazy_module)
+                logger.debug(
+                    "Optional language package %s not installed", config.lazy_module
+                )
                 return None
 
         if not lang_fn:
@@ -293,9 +608,7 @@ class TreeSitterReader:
         if not body:
             return ""
         lines = body.split("\n")
-        return "\n".join(
-            f"  {start_line + i} | {line}" for i, line in enumerate(lines)
-        )
+        return "\n".join(f"  {start_line + i} | {line}" for i, line in enumerate(lines))
 
     def _find_function(self, file_path: str, function_name: str) -> tuple[str, int]:
         """Find a named function, return (body_text, 1-based start line)."""
@@ -451,6 +764,7 @@ class TreeSitterReader:
 # Callee name extraction — language-agnostic, driven by AST node type.
 # ---------------------------------------------------------------------------
 
+
 def _extract_callee_name(func_ref: Node) -> str:
     """Extract the callee name from a call's function reference node."""
     # obj.method() → attribute (Python) / member_expression (JS/TS) / field_expression (Rust)
@@ -473,6 +787,7 @@ def _extract_callee_name(func_ref: Node) -> str:
 # Import extraction — one function per import style.
 # ---------------------------------------------------------------------------
 
+
 def _extract_python_imports(node: Node, imports: list[str]) -> None:
     if node.type == "import_statement":
         for child in node.children:
@@ -480,7 +795,11 @@ def _extract_python_imports(node: Node, imports: list[str]) -> None:
                 imports.append(child.text.decode())
     elif node.type == "import_from_statement":
         for child in node.children:
-            if child.type == "dotted_name" and child.prev_sibling and child.prev_sibling.type == "import":
+            if (
+                child.type == "dotted_name"
+                and child.prev_sibling
+                and child.prev_sibling.type == "import"
+            ):
                 imports.append(child.text.decode())
             elif child.type == "aliased_import":
                 name_node = child.child_by_field_name("name")
