@@ -10,3 +10,11 @@ function sanitizedXss(req, res) {
     const html = "<h1>" + safe + "</h1>";
     res.send(html);
 }
+
+function multilineCall(req, res) {
+    const userInput = req.query.search;
+    const result = fetch(
+        "/api/search?q=" + userInput,
+        { method: "GET" }
+    );
+}

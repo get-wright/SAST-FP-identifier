@@ -58,7 +58,12 @@ def trace_taint_flow(
     # Trace backwards from each sink variable; take the first successful trace
     for sink_var in sink_vars:
         path, used_sanitizers = _trace_back(
-            sink_var, deps, sanitizers, params, config, set(),
+            sink_var,
+            deps,
+            sanitizers,
+            params,
+            config,
+            set(),
         )
         if path is None:
             continue
@@ -75,7 +80,8 @@ def trace_taint_flow(
         # Filter sanitizers to only those applied to variables in the taint path
         path_vars = {step.variable for step in path}
         relevant_sanitizers = [
-            s for s in used_sanitizers
+            s
+            for s in used_sanitizers
             if _sanitizer_target_vars(sanitizers, s.name) & path_vars
         ]
 
@@ -92,13 +98,19 @@ def trace_taint_flow(
         if deduped:
             unconditional = [s for s in deduped if not s.conditional]
             if unconditional:
-                confidence_factors.append(f"Sanitizer {unconditional[0].name} found in path")
+                confidence_factors.append(
+                    f"Sanitizer {unconditional[0].name} found in path"
+                )
             else:
-                confidence_factors.append("Conditional sanitizer only — may not always execute")
+                confidence_factors.append(
+                    "Conditional sanitizer only — may not always execute"
+                )
         elif source_step.kind in ("parameter", "source"):
             confidence_factors.append("Direct source to sink with no sanitizer")
 
-        inferred = infer_sink_source(check_id, cwe_list, _get_line_text(file_path, sink_line))
+        inferred = infer_sink_source(
+            check_id, cwe_list, _get_line_text(file_path, sink_line)
+        )
 
         return TaintFlow(
             path=path,
@@ -110,14 +122,18 @@ def trace_taint_flow(
 
     # No taint path found — might be hardcoded
     confidence_factors = ["No external source — values appear hardcoded"]
-    inferred = infer_sink_source(check_id, cwe_list, _get_line_text(file_path, sink_line))
+    inferred = infer_sink_source(
+        check_id, cwe_list, _get_line_text(file_path, sink_line)
+    )
     return TaintFlow(
-        path=[FlowStep(
-            variable=sink_vars[0],
-            line=sink_line,
-            expression=_get_line_text(file_path, sink_line),
-            kind="sink",
-        )],
+        path=[
+            FlowStep(
+                variable=sink_vars[0],
+                line=sink_line,
+                expression=_get_line_text(file_path, sink_line),
+                kind="sink",
+            )
+        ],
         sanitizers=[],
         unresolved_calls=unresolved,
         confidence_factors=confidence_factors,
@@ -125,7 +141,9 @@ def trace_taint_flow(
     )
 
 
-def _find_function_node(root: Node, name: str, config: LanguageConfig) -> Optional[Node]:
+def _find_function_node(
+    root: Node, name: str, config: LanguageConfig
+) -> Optional[Node]:
     """Find a function node by name."""
     for node in _walk(root):
         if node.type not in config.func_types:
@@ -134,7 +152,11 @@ def _find_function_node(root: Node, name: str, config: LanguageConfig) -> Option
         if name_node and name_node.text.decode() == name:
             return node
         # JS arrow functions: name from parent variable_declarator
-        if node.type == "arrow_function" and node.parent and node.parent.type == "variable_declarator":
+        if (
+            node.type == "arrow_function"
+            and node.parent
+            and node.parent.type == "variable_declarator"
+        ):
             vd_name = node.parent.child_by_field_name("name")
             if vd_name and vd_name.text.decode() == name:
                 return node
@@ -185,12 +207,14 @@ def _build_deps(
         line = node.start_point[0] + 1
         expr_text = node.text.decode()
 
-        deps.setdefault(lhs_name, []).append({
-            "deps": rhs_ids,
-            "line": line,
-            "expr": expr_text,
-            "node": node,
-        })
+        deps.setdefault(lhs_name, []).append(
+            {
+                "deps": rhs_ids,
+                "line": line,
+                "expr": expr_text,
+                "node": node,
+            }
+        )
 
         # Check for sanitizer calls in RHS
         for call_node in _find_calls(rhs_node, config):
@@ -201,7 +225,9 @@ def _build_deps(
             san_info = check_known_sanitizer(callee)
             if san_info is not None:
                 san_info.line = line
-                san_info.conditional = is_conditional_ancestor(node, config.conditional_types)
+                san_info.conditional = is_conditional_ancestor(
+                    node, config.conditional_types
+                )
                 sanitizers_by_var.setdefault(lhs_name, []).append(san_info)
             else:
                 # Check if it's an unresolved external call
@@ -217,7 +243,9 @@ def _build_deps(
     return deps, sanitizers_by_var, unresolved
 
 
-def _extract_assignment(node: Node, config: LanguageConfig) -> tuple[str, Optional[Node]]:
+def _extract_assignment(
+    node: Node, config: LanguageConfig
+) -> tuple[str, Optional[Node]]:
     """Extract (lhs_name, rhs_node) from an assignment node."""
     if node.type == "variable_declarator":
         # JS: const x = expr → field "name" and "value"
@@ -263,7 +291,9 @@ def _get_callee_name(call_node: Node, config: LanguageConfig) -> str:
         return func_ref.text.decode()
     if func_ref.type in ("attribute", "member_expression"):
         # Get just the method name
-        attr = func_ref.child_by_field_name("attribute") or func_ref.child_by_field_name("property")
+        attr = func_ref.child_by_field_name(
+            "attribute"
+        ) or func_ref.child_by_field_name("property")
         if attr:
             return attr.text.decode()
     return ""
@@ -278,20 +308,22 @@ def _get_full_callee(call_node: Node, config: LanguageConfig) -> str:
 
 
 def _find_vars_at_line(func_node: Node, line: int, config: LanguageConfig) -> list[str]:
-    """Find variable identifiers used at a specific line (in call arguments)."""
-    row = line - 1
+    """Find variable identifiers used at a specific line.
+
+    Checks call arguments and return statements. For call expressions,
+    uses range matching (start_point to end_point) because Semgrep may
+    report any line within a multi-line call, not just the first line.
+    """
+    row = line - 1  # tree-sitter uses 0-indexed rows
     variables: list[str] = []
     call_types = set(config.call_types)
 
     for node in _walk(func_node):
-        if node.start_point[0] != row:
-            continue
-        if node.type in call_types:
-            # Get arguments
-            args_node = (
-                node.child_by_field_name("arguments")
-                or node.child_by_field_name("argument_list")
-            )
+        # Range match: the reported line falls anywhere within this call node
+        if node.type in call_types and node.start_point[0] <= row <= node.end_point[0]:
+            args_node = node.child_by_field_name(
+                "arguments"
+            ) or node.child_by_field_name("argument_list")
             if args_node is None:
                 # Python call uses argument_list as a child type
                 for child in node.children:
@@ -303,7 +335,8 @@ def _find_vars_at_line(func_node: Node, line: int, config: LanguageConfig) -> li
                     if child.type == "identifier":
                         variables.append(child.text.decode())
 
-    # Also check for return statements at that line
+    # Also check for return statements at that line (exact match is fine —
+    # return statements are single-line in practice)
     for node in _walk(func_node):
         if node.start_point[0] != row:
             continue
@@ -341,7 +374,9 @@ def _trace_back(
 
     # Base case: parameter
     if var in params:
-        step = FlowStep(variable=var, line=0, expression=f"parameter: {var}", kind="parameter")
+        step = FlowStep(
+            variable=var, line=0, expression=f"parameter: {var}", kind="parameter"
+        )
         return [step], []
 
     # Base case: not in deps at all (external or builtin)
@@ -365,9 +400,13 @@ def _trace_back(
         for dep_var in dep_vars:
             if dep_var == var:
                 continue
-            sub_path, sub_sans = _trace_back(dep_var, deps, sanitizers_by_var, params, config, visited)
+            sub_path, sub_sans = _trace_back(
+                dep_var, deps, sanitizers_by_var, params, config, visited
+            )
             if sub_path is not None:
-                step = FlowStep(variable=var, line=line, expression=expr, kind="assignment")
+                step = FlowStep(
+                    variable=var, line=line, expression=expr, kind="assignment"
+                )
                 san_list = sanitizers_by_var.get(var, [])
                 return sub_path + [step], sub_sans + list(san_list)
 
@@ -394,7 +433,9 @@ def _param_names_from_dangerous(config: LanguageConfig) -> set[str]:
     return names
 
 
-def _sanitizer_target_vars(sanitizers_by_var: dict[str, list[SanitizerInfo]], san_name: str) -> set[str]:
+def _sanitizer_target_vars(
+    sanitizers_by_var: dict[str, list[SanitizerInfo]], san_name: str
+) -> set[str]:
     """Find which variables a sanitizer was applied to."""
     result: set[str] = set()
     for var, sans in sanitizers_by_var.items():
