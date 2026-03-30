@@ -7,9 +7,9 @@ rules by file extension and provides a queryable TaintRuleSet.
 from __future__ import annotations
 
 import json
-import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 from src.taint.models import SanitizerInfo
 
@@ -22,7 +22,9 @@ class LanguageRules:
     sources: frozenset[str]
     call_sinks: frozenset[str]
     property_sinks: frozenset[str]
-    sanitizers: dict[str, list[str]]  # lowercase name -> CWE list
+    sanitizers: MappingProxyType[
+        str, list[str]
+    ]  # lowercase name -> CWE list (read-only)
     guards: frozenset[str]
 
 
@@ -168,7 +170,7 @@ def _merge(raw_rules: list[dict]) -> TaintRuleSet:
             sources=frozenset(entry["sources"]),
             call_sinks=frozenset(entry["call_sinks"]),
             property_sinks=frozenset(entry["property_sinks"]),
-            sanitizers=entry["sanitizers"],
+            sanitizers=MappingProxyType(entry["sanitizers"]),
             guards=frozenset(entry["guards"]),
         )
 
