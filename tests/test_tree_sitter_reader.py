@@ -18,6 +18,7 @@ def reader():
 
 # --- Python tests ---
 
+
 def test_find_enclosing_function(reader):
     # Line 13 is inside process_input
     name = reader.find_enclosing_function(FIXTURE, 13)
@@ -69,6 +70,7 @@ def test_unsupported_language_returns_empty(reader):
 
 # --- JavaScript tests ---
 
+
 def test_find_enclosing_javascript_function(reader):
     name = reader.find_enclosing_function(JS_FIXTURE, 6)
     assert name == "applyDark"
@@ -81,6 +83,7 @@ def test_find_callees_in_javascript_function(reader):
 
 
 # --- TypeScript tests ---
+
 
 def test_ts_find_enclosing_function(reader):
     # Line 5 is inside processRequest
@@ -118,6 +121,7 @@ def test_ts_get_function_body_arrow(reader):
 
 # --- Ruby tests ---
 
+
 def test_rb_find_enclosing_function(reader):
     # Line 5 is inside process_data
     name = reader.find_enclosing_function(RB_FIXTURE, 5)
@@ -144,6 +148,7 @@ def test_rb_find_imports(reader):
 
 # --- Rust tests ---
 
+
 def test_rs_find_enclosing_function(reader):
     # Line 5 is inside process_input
     name = reader.find_enclosing_function(RS_FIXTURE, 5)
@@ -164,18 +169,21 @@ def test_rs_find_imports(reader):
 
 # --- Edge cases ---
 
+
 def test_svelte_ts_extension(reader, tmp_path):
     """Files like component.svelte.ts should be parsed as TypeScript."""
     ts_file = tmp_path / "component.svelte.ts"
-    ts_file.write_text('function setup(): void { return; }\n')
+    ts_file.write_text("function setup(): void { return; }\n")
     name = reader.find_enclosing_function(str(ts_file), 1)
     assert name == "setup"
 
 
 # --- Taint field tests ---
 
+
 def test_python_language_config_has_taint_fields():
     from src.code_reader.tree_sitter_reader import _LANG_REGISTRY
+
     _, config = _LANG_REGISTRY[".py"]
     assert config.assignment_types
     assert "assignment" in config.assignment_types
@@ -186,24 +194,31 @@ def test_python_language_config_has_taint_fields():
 
 def test_js_language_config_has_taint_fields():
     from src.code_reader.tree_sitter_reader import _LANG_REGISTRY
+
     _, config = _LANG_REGISTRY[".js"]
-    assert "assignment_expression" in config.assignment_types or "variable_declarator" in config.assignment_types
+    assert (
+        "assignment_expression" in config.assignment_types
+        or "variable_declarator" in config.assignment_types
+    )
 
 
 def test_go_language_config_has_taint_fields():
     from src.code_reader.tree_sitter_reader import _LANG_REGISTRY
+
     _, config = _LANG_REGISTRY[".go"]
     assert "short_var_declaration" in config.assignment_types
 
 
 def test_java_language_config_has_taint_fields():
     from src.code_reader.tree_sitter_reader import _LANG_REGISTRY
+
     _, config = _LANG_REGISTRY[".java"]
     assert "variable_declarator" in config.assignment_types
 
 
 def test_unsupported_language_has_empty_taint_fields():
     from src.code_reader.tree_sitter_reader import _LANG_REGISTRY
+
     _, config = _LANG_REGISTRY[".php"]
     assert not config.assignment_types
     assert not config.parameter_types
@@ -211,7 +226,45 @@ def test_unsupported_language_has_empty_taint_fields():
 
 def test_tree_sitter_reader_public_accessors():
     from src.code_reader.tree_sitter_reader import TreeSitterReader
+
     reader = TreeSitterReader()
     config = reader.get_config(".py")
     assert config is not None
     assert config.assignment_types
+
+
+# --- Member access & dangerous sinks tests ---
+
+
+def test_python_config_has_member_access_and_sinks(reader):
+    config = reader.get_config(".py")
+    assert "attribute" in config.member_access_types
+    assert "data" in config.dangerous_sinks
+
+
+def test_js_config_has_member_access_and_sinks(reader):
+    config = reader.get_config(".js")
+    assert "member_expression" in config.member_access_types
+    assert "innerHTML" in config.dangerous_sinks
+    assert "outerHTML" in config.dangerous_sinks
+    assert "href" in config.dangerous_sinks
+    assert "src" in config.dangerous_sinks
+
+
+def test_go_config_has_member_access_no_sinks(reader):
+    config = reader.get_config(".go")
+    assert "selector_expression" in config.member_access_types
+    assert len(config.dangerous_sinks) == 0
+
+
+def test_java_config_has_member_access_no_sinks(reader):
+    config = reader.get_config(".java")
+    assert "field_access" in config.member_access_types
+    assert len(config.dangerous_sinks) == 0
+
+
+def test_unsupported_language_has_empty_sink_fields(reader):
+    config = reader.get_config(".php")
+    if config is not None:
+        assert len(config.member_access_types) == 0
+        assert len(config.dangerous_sinks) == 0
