@@ -92,6 +92,8 @@ class Parser(Protocol):
 
 The existing `TreeSitterReader` + `LanguageConfig` already satisfy these protocols. The enricher wraps them in a trivial adapter.
 
+**Note on import handling:** The grammar protocol intentionally excludes `import_type`, `import_source_field`, `import_style` from `LanguageConfig`. Import resolution (e.g., `from flask import request`) stays outside the taint engine — it's handled by the enricher's existing tree-sitter reader and gkg callers. The taint engine matches source names (e.g., `request.args.get`) against the dependency graph without needing to resolve imports.
+
 ### 2. JSON Rule System
 
 **Rule file format** (one per language, at `src/taint/rules/<language>.json`):
@@ -130,7 +132,7 @@ The existing `TreeSitterReader` + `LanguageConfig` already satisfy these protoco
 | `sources` | string[] | yes | Dotted names of taint sources (e.g., `request.args.get`). The engine checks if a variable originates from one of these. |
 | `sinks.call` | string[] | no | Function names where passing tainted args is dangerous. Matched against call expressions. |
 | `sinks.property` | string[] | no | Property names where assignment is dangerous (`obj.<property> = tainted`). Matched against member-access assignment LHS. |
-| `sanitizers` | object[] | no | Functions that neutralize taint. Each has `name` (string, required) and `neutralizes` (string[] of CWE IDs, optional — defaults to all CWEs). |
+| `sanitizers` | object[] | no | Functions that neutralize taint. Each has `name` (string, required) and `neutralizes` (string[] of CWE IDs, optional — defaults to all CWEs). When `neutralizes` is absent or empty, `SanitizerInfo.cwe_categories` is set to `["*"]` meaning "neutralizes all CWE types". When present, `cwe_categories` is set to the exact list (e.g., `["CWE-79"]`). |
 | `guards` | string[] | no | Function names that, when used in a conditional before the sink, restrict tainted values. |
 
 **Loading API:**
@@ -142,6 +144,16 @@ def load_rules(path: str) -> TaintRuleSet:
     If path is a directory, loads all *.json files and merges by extension.
     If path is a file, loads that single file.
     Returns a TaintRuleSet that can be queried by file extension.
+    
+    Error handling:
+    - Missing required fields (language, extensions): raises ValueError at load time
+    - Unknown fields: ignored (lenient parsing, forward-compatible)
+    - Duplicate extensions across files: sources/sinks/sanitizers/guards are UNIONED
+    - Empty extensions array: rule is loaded but matches no files
+    - Invalid JSON / wrong schema: raises ValueError with file path in message
+    - Missing/unreadable file: raises FileNotFoundError
+    
+    Validation is eager — all errors surface at load_rules() time, not at query time.
     """
 ```
 
@@ -186,11 +198,11 @@ Replaces `flow_tracker.py` with a reaching-definitions-based approach.
 @dataclass
 class Definition:
     """A single assignment/definition of a variable."""
-    variable: str          # or AccessPath for field tracking
+    variable: AccessPath   # e.g., AccessPath("x", ()) or AccessPath("obj", ("field",))
     line: int
     expression: str        # source text
     node: ASTNode
-    deps: set[str]         # variables this definition reads from
+    deps: set[str]         # variable names this definition reads from (flat names for lookup)
     branch_context: str    # "" (unconditional), "if_true", "if_false", "loop"
 
 @dataclass  
@@ -231,6 +243,12 @@ function analyze(func_node, grammar, rules, ext):
     walk_body(func_node.body, grammar, rules, ext, active)
     
     # At the sink line, look up which definitions reach the sink variables
+    # find_vars_at_line has 3 passes (same structure as current flow_tracker.py):
+    #   Pass 1: Call arguments — range match (start_point <= row <= end_point)
+    #           Also checks rules.is_call_sink(ext, callee) for call-expression sinks
+    #   Pass 2: Return statements — exact line match
+    #   Pass 3: Assignment to dangerous property — uses rules.is_property_sink(ext, prop)
+    #           instead of config.dangerous_sinks
     sink_vars = find_vars_at_line(func_node, sink_line, grammar, rules, ext)
     
     # Trace backwards through the reaching definitions
@@ -251,10 +269,19 @@ function walk_body(stmts, grammar, rules, ext, active):
                 deps = collect_reads(rhs)
                 defn = Definition(variable=lhs, deps=deps, ...)
                 
-                # Check sanitizer on RHS calls
+                # Check RHS calls for sanitizers and unknown-call propagation
                 for call in find_calls(rhs):
-                    if rules.check_sanitizer(ext, callee_name(call)):
-                        record_sanitizer(...)
+                    callee = callee_name(call)
+                    san = rules.check_sanitizer(ext, callee)
+                    if san:
+                        record_sanitizer(san, lhs, ...)
+                    elif callee not in params and not is_builtin(callee):
+                        # Unknown call: taint propagates from args to return
+                        # (matches Semgrep/CodeQL/Joern default behavior).
+                        # collect_reads already captured the call's arguments
+                        # in deps, so the dependency graph connects lhs -> args.
+                        # Record the call as unresolved for reporting.
+                        record_unresolved(callee)
                 
                 active.define(lhs, defn)
             
@@ -268,20 +295,41 @@ function walk_body(stmts, grammar, rules, ext, active):
                     if rules.is_guard(ext, callee_name(call)):
                         record_guard(call, ...)
                 
-                saved = active.fork()
-                walk_body(true_branch, ..., active)    # mutates active
-                true_state = active
-                active = saved                          # restore
+                # Fork-walk-merge for branches:
+                # 1. Fork a copy of current state for the true branch
+                # 2. Walk true branch (mutates the copy)
+                # 3. Walk false branch on the original (or keep original if no else)
+                # 4. Merge: union of both states
+                #
+                # When false_branch is None (no else clause), the "false" state
+                # is the pre-branch state (saved). This means variables defined
+                # only in the true branch get BOTH the true-branch def AND the
+                # pre-branch def at the join point — correct, because the true
+                # branch might not execute.
+                
+                true_active = active.fork()           # deep copy for true branch
+                walk_body(true_branch, ..., true_active)  # mutates true_active
                 if false_branch:
-                    walk_body(false_branch, ..., active)
-                active.merge(true_state)                # join
+                    walk_body(false_branch, ..., active)   # mutates active (false path)
+                # else: active still holds pre-branch defs (the "no else" path)
+                active.merge(true_active)              # union at join point
             
             case for/while_loop:
-                # Walk body twice for fixpoint (handles loop-carried deps)
+                # Approximate fixpoint: walk loop body twice.
+                # This is NOT a true worklist fixpoint — it's a pragmatic
+                # approximation that handles most single-level loop-carried
+                # deps (e.g., x = f(x) in a loop). True fixpoint would
+                # require a worklist over CFG basic blocks, which we don't build.
+                #
+                # For nested loops, inner loops get their own 2-pass treatment
+                # during each walk of the outer body (so inner = 2 * 2 = 4 walks).
+                #
+                # Merge with pre-loop snapshot because the loop might not execute
+                # (for/while condition could be false on first check).
                 snapshot = active.fork()
-                walk_body(loop_body, ..., active)
-                walk_body(loop_body, ..., active)  # second pass for convergence
-                active.merge(snapshot)  # loop might not execute
+                walk_body(loop_body, ..., active)        # first pass
+                walk_body(loop_body, ..., active)        # second pass (picks up loop-carried defs)
+                active.merge(snapshot)                   # loop might not execute
             
             case call_expression:
                 # Standalone call (not RHS of assignment)
@@ -376,11 +424,12 @@ src/taint/
 ├── __init__.py              # Public API re-exports
 ├── models.py                # FlowStep, SanitizerInfo, TaintFlow, GuardInfo, AccessPath, etc.
 ├── rules.py                 # load_rules(), TaintRuleSet, LanguageRules
-├── engine.py                # Reaching defs, taint propagation, trace_taint_flow()
+├── engine.py                # Core: trace_taint_flow(), reaching defs, trace_back, find_vars_at_line
+├── walker.py                # walk_body(), branch/loop handling, guard/sanitizer recording
 ├── parser_protocol.py       # ASTNode, LanguageGrammar, Parser protocols
 ├── sanitizer_checker.py     # Rewritten: delegates to TaintRuleSet, keeps is_conditional_ancestor
 ├── sink_source_inference.py # Minimal changes: uses rules for source/sink matching
-├── cross_file.py            # Minimal changes: updated model imports
+├── cross_file.py            # Updated: new model imports, accepts rules/parser params
 └── rules/
     ├── python.json
     ├── javascript.json
@@ -395,7 +444,8 @@ src/taint/
 |------|----------------|-------|
 | `models.py` | ~180 | Moved from analysis.py + AccessPath + GuardInfo |
 | `rules.py` | ~120 | Rule loading, merging, lookup |
-| `engine.py` | ~400 | Reaching defs, walk_body, trace_back, find_vars_at_line |
+| `engine.py` | ~350 | Core: reaching defs, trace_back, find_vars_at_line |
+| `walker.py` | ~200 | walk_body, branch/loop handling, guard/sanitizer recording |
 | `parser_protocol.py` | ~40 | Protocol definitions |
 | `sanitizer_checker.py` | ~40 | Thin wrapper around rules |
 | `sink_source_inference.py` | ~80 | Mostly unchanged |
@@ -455,9 +505,51 @@ Remove `_JS_TAINT_FIELDS` shared dict (no longer needed — taint config is in J
 
 #### `src/core/orchestrator.py` and `src/llm/prompt_builder.py`
 
-Import path changes only (or no changes if using backward-compat re-exports from `src/models/analysis.py`). Prompt builder renders the new `guards` field if present.
+Import path changes only (or no changes if using backward-compat re-exports from `src/models/analysis.py`). Prompt builder renders the new `guards` field if present, formatted as:
+```
+GUARDS IN PATH:
+  - re.match() at line 1065 checks variable: url
+```
+`TaintFlow.to_dict()` / `from_dict()` must serialize the new `guards` list for cache compatibility.
+
+#### `src/taint/cross_file.py`
+
+Currently imports `from src.taint.flow_tracker import trace_taint_flow`. Updated to import from the new engine:
+
+```python
+# Before:
+from src.taint.flow_tracker import trace_taint_flow
+from src.models.analysis import TaintFlow
+
+# After:
+from src.taint.engine import trace_taint_flow
+from src.taint.models import TaintFlow
+```
+
+`resolve_cross_file` already accepts `gkg_client` as a parameter (duck-typed). It will additionally need `rules` and `parser` parameters passed through from the enricher, since `trace_taint_flow` now requires them:
+
+```python
+async def resolve_cross_file(
+    callee_name: str,
+    gkg_client,
+    repo_path: str,
+    rules: TaintRuleSet,    # new
+    parser: Parser,          # new
+    ...
+) -> CrossFileResult:
+```
+
+The enricher passes these when calling `resolve_cross_file`.
 
 ### 6. Testing Strategy
+
+- **New fixture files needed** (in `tests/fixtures/`):
+  - `taint_reaching_defs.py` — kill semantics, branch merging, loop handling
+  - `taint_reaching_defs.js` — same patterns in JS
+  - `taint_guards.py` — guard functions before sinks (`if not validate(x): return`)
+  - `taint_access_paths.py` — `obj.field` assignments and sinks
+  - `taint_string_ops.py` — f-strings, concatenation, `.format()`
+  - `taint_string_ops.js` — template literals, string `+`
 
 - **Unit tests for `engine.py`**: Test each tracing capability against fixture files:
   - Straight-line taint: param → assignment → sink
