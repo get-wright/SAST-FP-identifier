@@ -310,7 +310,7 @@ def test_loop_taint_python():
     assert flow.source.kind in ("parameter", "source")
 
 
-# --- Backward compat: engine matches old flow_tracker behavior ---
+# --- Parity tests: engine covers flow_tracker scenarios ---
 
 
 def test_existing_fixture_direct_sqli():

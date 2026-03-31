@@ -1,8 +1,6 @@
 """Detect known sanitizers and check conditional placement.
 
 This module delegates to the JSON rule system for sanitizer lookup.
-The legacy check_known_sanitizer() function loads the default Python
-rules for backward compatibility with flow_tracker.py.
 """
 
 from __future__ import annotations
@@ -29,7 +27,6 @@ def check_known_sanitizer(callee_name: str) -> Optional[SanitizerInfo]:
     """Check if a callee is a known sanitizer using the JSON rules.
 
     Tries all language rule sets. Returns the first match.
-    This is a backward-compat API used by flow_tracker.py.
     """
     rules = _get_default_rules()
     for ext in rules._by_ext:
