@@ -32,7 +32,7 @@ def check_known_sanitizer(callee_name: str) -> Optional[SanitizerInfo]:
     This is a backward-compat API used by flow_tracker.py.
     """
     rules = _get_default_rules()
-    for ext in (".py", ".js", ".ts", ".go", ".java", ".php"):
+    for ext in rules._by_ext:
         san = rules.check_sanitizer(ext, callee_name)
         if san is not None:
             return san

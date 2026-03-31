@@ -116,7 +116,7 @@ def _render_taint_flow(flow) -> str:
     else:
         lines.append("SANITIZERS IN PATH: NONE")
 
-    if hasattr(flow, "guards") and flow.guards:
+    if flow.guards:
         guard_strs = []
         for g in flow.guards:
             guard_strs.append(
