@@ -10,6 +10,16 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field as dataclass_field
 
+from src.taint.ast_helpers import (
+    collect_identifiers,
+    find_calls_in,
+    get_callee_name,
+    get_full_callee,
+    get_member_object,
+    get_member_property,
+    is_conditional_ancestor,
+    walk_tree,
+)
 from src.taint.models import AccessPath, GuardInfo, SanitizerInfo
 
 logger = logging.getLogger(__name__)
@@ -125,7 +135,7 @@ def _handle_assignment(node, grammar, state: WalkState) -> None:
     if not lhs_name or rhs_node is None:
         return
 
-    rhs_ids = frozenset(_collect_identifiers(rhs_node))
+    rhs_ids = frozenset(collect_identifiers(rhs_node))
     line = node.start_point[0] + 1
     expr_text = node.text.decode()
 
@@ -141,16 +151,16 @@ def _handle_assignment(node, grammar, state: WalkState) -> None:
 
     # Check RHS calls for sanitizers
     call_types = set(grammar.call_types)
-    for call_node in _find_calls_in(rhs_node, call_types):
+    for call_node in find_calls_in(rhs_node, call_types):
         _check_sanitizer(call_node, line, node, grammar, state)
 
 
 def _check_sanitizer(call_node, line, context_node, grammar, state):
     """Check if a call is a known sanitizer and record it."""
-    callee = _get_callee_name(call_node)
+    callee = get_callee_name(call_node)
     if not callee:
         return
-    callee_full = _get_full_callee(call_node) or callee
+    callee_full = get_full_callee(call_node) or callee
 
     # Try full dotted name first, then short name (suffix indexing)
     san = state.rules.check_sanitizer(state.ext, callee_full)
@@ -159,7 +169,7 @@ def _check_sanitizer(call_node, line, context_node, grammar, state):
 
     if san is not None:
         san.line = line
-        san.conditional = _is_conditional_ancestor(
+        san.conditional = is_conditional_ancestor(
             context_node, set(grammar.conditional_types)
         )
         state.sanitizers.append(san)
@@ -215,11 +225,11 @@ def _handle_conditional(node, grammar, state: WalkState) -> None:
 def _check_guards_in(condition, parent_node, grammar, state):
     """Check if condition contains guard function calls."""
     call_types = set(grammar.call_types)
-    for call_node in _find_calls_in(condition, call_types):
-        callee = _get_callee_name(call_node)
+    for call_node in find_calls_in(condition, call_types):
+        callee = get_callee_name(call_node)
         if not callee:
             continue
-        callee_full = _get_full_callee(call_node) or callee
+        callee_full = get_full_callee(call_node) or callee
         is_guard = state.rules.is_guard(state.ext, callee_full) or (
             callee_full != callee and state.rules.is_guard(state.ext, callee)
         )
@@ -241,7 +251,7 @@ def _find_checked_variable(call_node) -> str:
     ) or call_node.child_by_field_name("argument_list")
     if not args_node:
         return ""
-    for child in _walk_tree(args_node):
+    for child in walk_tree(args_node):
         if child.type == "identifier":
             return child.text.decode()
     return ""
@@ -277,10 +287,10 @@ def _handle_mutating_call(call_node, grammar, state: WalkState) -> None:
     member_types = set(grammar.member_access_types)
     if func_ref.type not in member_types:
         return
-    method_name = _get_member_property(func_ref)
+    method_name = get_member_property(func_ref)
     if method_name not in _MUTATING_METHODS:
         return
-    obj_name = _get_member_object(func_ref)
+    obj_name = get_member_object(func_ref)
     if not obj_name:
         return
 
@@ -290,7 +300,7 @@ def _handle_mutating_call(call_node, grammar, state: WalkState) -> None:
     ) or call_node.child_by_field_name("argument_list")
     arg_ids: frozenset[str] = frozenset()
     if args_node:
-        arg_ids = frozenset(_collect_identifiers(args_node))
+        arg_ids = frozenset(collect_identifiers(args_node))
 
     line = call_node.start_point[0] + 1
     expr_text = call_node.text.decode()
@@ -308,7 +318,7 @@ def _handle_mutating_call(call_node, grammar, state: WalkState) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AST helpers
+# AST helpers (local to walker)
 # ---------------------------------------------------------------------------
 
 
@@ -339,92 +349,8 @@ def _extract_assignment(node, grammar) -> tuple[str, object | None]:
     # Member access on LHS: obj.field = value
     member_types = set(grammar.member_access_types)
     if left and left.type in member_types and right:
-        prop = _get_member_property(left)
-        obj = _get_member_object(left)
+        prop = get_member_property(left)
+        obj = get_member_object(left)
         if obj and prop:
             return f"{obj}.{prop}", right
     return "", None
-
-
-def _get_member_property(member_node) -> str:
-    """Extract property name from member-access node."""
-    for field_name in ("property", "attribute", "field"):
-        prop = member_node.child_by_field_name(field_name)
-        if prop is not None:
-            return prop.text.decode()
-    return ""
-
-
-def _get_member_object(member_node) -> str:
-    """Extract object name from member-access node."""
-    obj = member_node.child_by_field_name("object")
-    if obj and obj.type == "identifier":
-        return obj.text.decode()
-    return ""
-
-
-def _collect_identifiers(node) -> set[str]:
-    """Collect all identifier names in a subtree."""
-    ids: set[str] = set()
-    for n in _walk_tree(node):
-        if n.type == "identifier":
-            ids.add(n.text.decode())
-    return ids
-
-
-def _find_calls_in(node, call_types: set[str]) -> list:
-    """Find all call nodes in a subtree."""
-    calls = []
-    for n in _walk_tree(node):
-        if n.type in call_types:
-            calls.append(n)
-    return calls
-
-
-def _get_callee_name(call_node) -> str:
-    """Get the simple callee name from a call node."""
-    func_ref = call_node.child_by_field_name("function")
-    if not func_ref:
-        return ""
-    if func_ref.type == "identifier":
-        return func_ref.text.decode()
-    if func_ref.type in ("attribute", "member_expression"):
-        attr = func_ref.child_by_field_name(
-            "attribute"
-        ) or func_ref.child_by_field_name("property")
-        if attr:
-            return attr.text.decode()
-    return ""
-
-
-def _get_full_callee(call_node) -> str:
-    """Get full dotted callee name (e.g. 're.match')."""
-    func_ref = call_node.child_by_field_name("function")
-    if not func_ref:
-        return ""
-    return func_ref.text.decode()
-
-
-def _is_conditional_ancestor(node, conditional_types: set[str]) -> bool:
-    """Check if node is inside a conditional block."""
-    current = node.parent
-    while current is not None:
-        if current.type in conditional_types:
-            return True
-        if current.type in (
-            "function_definition",
-            "function_declaration",
-            "method_definition",
-            "method_declaration",
-            "arrow_function",
-        ):
-            break
-        current = current.parent
-    return False
-
-
-def _walk_tree(node):
-    """Depth-first walk of AST nodes."""
-    yield node
-    for child in node.children:
-        yield from _walk_tree(child)

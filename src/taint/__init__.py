@@ -37,6 +37,10 @@ __all__ = [
 
 
 def __getattr__(name: str):
+    # Lazy import required to break circular dependency:
+    #   src.taint.__init__ → engine → sink_source_inference
+    #   → src.models.analysis → src.taint.models (partially initialized)
+    # Eager import of engine triggers this chain before __init__ finishes.
     if name == "trace_taint_flow":
         from src.taint.engine import trace_taint_flow
 

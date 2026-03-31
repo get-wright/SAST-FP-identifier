@@ -20,18 +20,20 @@ from src.taint.models import (
     InferredSinkSource,
 )
 from src.taint.rules import TaintRuleSet
+from src.taint.ast_helpers import (
+    collect_identifiers,
+    find_calls_in,
+    get_callee_name,
+    get_full_callee,
+    get_member_object,
+    get_member_property,
+    walk_tree,
+)
 from src.taint.walker import (
     ActiveDefs,
     Definition,
     WalkState,
     walk_body,
-    _walk_tree,
-    _find_calls_in,
-    _get_callee_name,
-    _get_full_callee,
-    _get_member_property,
-    _get_member_object,
-    _collect_identifiers,
 )
 from src.taint.sink_source_inference import infer_sink_source
 
@@ -163,7 +165,7 @@ def _find_function_node(root, function_name: str, grammar) -> object | None:
     """Find a function node by name in the AST."""
     func_types = set(grammar.func_types)
 
-    for node in _walk_tree(root):
+    for node in walk_tree(root):
         if node.type in func_types:
             name_node = node.child_by_field_name("name")
             if name_node and name_node.text.decode() == function_name:
@@ -171,7 +173,7 @@ def _find_function_node(root, function_name: str, grammar) -> object | None:
 
     # JS arrow functions: const foo = (...) => { ... }
     if getattr(grammar, "has_arrow_functions", False):
-        for node in _walk_tree(root):
+        for node in walk_tree(root):
             if node.type == "variable_declarator":
                 name_node = node.child_by_field_name("name")
                 value_node = node.child_by_field_name("value")
@@ -240,7 +242,7 @@ def _find_vars_at_line(
     # Pass 1: Call arguments — range match for multi-line calls.
     # Match ANY call at the sink line; Semgrep already identified this line
     # as a finding, so the call here is the sink regardless of rule config.
-    for node in _walk_tree(func_node):
+    for node in walk_tree(func_node):
         if node.type not in call_types:
             continue
         start_row = node.start_point[0] + 1
@@ -262,7 +264,7 @@ def _find_vars_at_line(
             continue
 
         expr_text = node.text.decode()
-        for arg_child in _walk_tree(args_node):
+        for arg_child in walk_tree(args_node):
             if arg_child.type == "identifier":
                 name = arg_child.text.decode()
                 if name not in seen:
@@ -279,7 +281,7 @@ def _find_vars_at_line(
         return results
 
     # Pass 2: Return statements (exact line match)
-    for node in _walk_tree(func_node):
+    for node in walk_tree(func_node):
         if node.type not in return_types:
             continue
         line = node.start_point[0] + 1
@@ -287,7 +289,7 @@ def _find_vars_at_line(
             continue
 
         expr_text = node.text.decode()
-        for child in _walk_tree(node):
+        for child in walk_tree(node):
             if child.type == "identifier":
                 if child.parent and child.parent.type in member_types:
                     continue
@@ -300,15 +302,9 @@ def _find_vars_at_line(
         return results
 
     # Pass 3: Property sink assignments (e.g. el.innerHTML = content)
-    for node in _walk_tree(func_node):
+    for node in walk_tree(func_node):
         if node.type not in assignment_types:
             continue
-        # Check expression_statement wrapper
-        if node.type == "expression_statement":
-            for ch in node.children:
-                if ch.type in assignment_types:
-                    node = ch
-                    break
 
         left = node.child_by_field_name("left")
         right = node.child_by_field_name("right")
@@ -321,10 +317,10 @@ def _find_vars_at_line(
         if line != sink_line:
             continue
 
-        prop_name = _get_member_property(left)
+        prop_name = get_member_property(left)
         if rules.is_property_sink(ext, prop_name):
             expr_text = node.text.decode()
-            for child in _walk_tree(right):
+            for child in walk_tree(right):
                 if child.type == "identifier":
                     name = child.text.decode()
                     if name not in seen:
@@ -333,7 +329,7 @@ def _find_vars_at_line(
 
     # Pass 3b: Also check expression_statements wrapping property assignments
     if not results:
-        for node in _walk_tree(func_node):
+        for node in walk_tree(func_node):
             if node.type != "expression_statement":
                 continue
             line = node.start_point[0] + 1
@@ -345,10 +341,10 @@ def _find_vars_at_line(
                     right = child.child_by_field_name("right")
                     if not left or not right or left.type not in member_types:
                         continue
-                    prop_name = _get_member_property(left)
+                    prop_name = get_member_property(left)
                     if rules.is_property_sink(ext, prop_name):
                         expr_text = child.text.decode()
-                        for rch in _walk_tree(right):
+                        for rch in walk_tree(right):
                             if rch.type == "identifier":
                                 name = rch.text.decode()
                                 if name not in seen:
@@ -360,8 +356,8 @@ def _find_vars_at_line(
 
 def _reconstruct_dotted(member_node) -> str:
     """Reconstruct a dotted name from a member access node (e.g. obj.field)."""
-    obj = _get_member_object(member_node)
-    prop = _get_member_property(member_node)
+    obj = get_member_object(member_node)
+    prop = get_member_property(member_node)
     if obj and prop:
         return f"{obj}.{prop}"
     return ""
@@ -380,12 +376,16 @@ def _trace_back(
     ext: str,
     grammar,
     visited: set[tuple[str, int]],
+    max_depth: int = 50,
 ) -> Optional[list[FlowStep]]:
     """Trace backwards from a variable through reaching definitions to find a source.
 
     Returns a list of FlowSteps from source to the variable (not including the
     final sink step), or None if no taint source is found.
     """
+    if max_depth <= 0:
+        return None
+
     # Base case: var is a parameter
     if var in params:
         # Check if the parameter's reaching def still points to the parameter
@@ -446,7 +446,16 @@ def _trace_back(
 
         # Recurse into dependencies
         for dep in defn.deps:
-            sub_path = _trace_back(dep, active, params, rules, ext, grammar, visited)
+            sub_path = _trace_back(
+                dep,
+                active,
+                params,
+                rules,
+                ext,
+                grammar,
+                visited,
+                max_depth=max_depth - 1,
+            )
             if sub_path:
                 step = FlowStep(
                     variable=var,
