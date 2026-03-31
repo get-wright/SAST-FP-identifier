@@ -109,10 +109,20 @@ def _render_taint_flow(flow) -> str:
         for s in flow.sanitizers:
             cond = " (CONDITIONAL)" if s.conditional else ""
             verified = " [verified]" if s.verified else ""
-            san_strs.append(f"{s.name} at line {s.line} ({', '.join(s.cwe_categories)}){cond}{verified}")
+            san_strs.append(
+                f"{s.name} at line {s.line} ({', '.join(s.cwe_categories)}){cond}{verified}"
+            )
         lines.append("SANITIZERS IN PATH: " + "; ".join(san_strs))
     else:
         lines.append("SANITIZERS IN PATH: NONE")
+
+    if hasattr(flow, "guards") and flow.guards:
+        guard_strs = []
+        for g in flow.guards:
+            guard_strs.append(
+                f"{g.name}() at line {g.line} checks variable: {g.variable}"
+            )
+        lines.append("GUARDS IN PATH:\n  - " + "\n  - ".join(guard_strs))
 
     if flow.unresolved_calls:
         lines.append(f"UNRESOLVED CALLS: {', '.join(flow.unresolved_calls)}")
@@ -122,7 +132,9 @@ def _render_taint_flow(flow) -> str:
 
     result = "\n".join(lines)
     if len(result) > FLOW_CHAR_BUDGET:
-        result = result[:FLOW_CHAR_BUDGET] + "\n  [... taint flow truncated due to length]"
+        result = (
+            result[:FLOW_CHAR_BUDGET] + "\n  [... taint flow truncated due to length]"
+        )
     return result
 
 
@@ -189,7 +201,9 @@ def build_dataflow_prompt(
             continue
         fnum = idx + 1
         lines = [f"--- Finding {fnum} ---"]
-        lines.append(f"Rule: {finding['rule']} | Line {finding['line']} — {finding['message']}")
+        lines.append(
+            f"Rule: {finding['rule']} | Line {finding['line']} — {finding['message']}"
+        )
         if ctx.code_snippet:
             lines.append(f"CODE:\n{ctx.code_snippet}")
         if ctx.taint_flow:
@@ -203,6 +217,7 @@ def build_dataflow_prompt(
             if not file_path.startswith("/"):
                 # Try common prefixes for repo-relative paths
                 import os
+
                 for candidate in [file_path, os.path.join(".", file_path)]:
                     if os.path.exists(candidate):
                         slice_path = candidate
@@ -215,7 +230,9 @@ def build_dataflow_prompt(
                 lines.append(f"{label}:\n{sliced}")
         elif ctx.enclosing_function and ctx.function_body:
             # Fallback: full function body when no taint flow
-            lines.append(f"ENCLOSING FUNCTION ({ctx.enclosing_function}):\n{ctx.function_body}")
+            lines.append(
+                f"ENCLOSING FUNCTION ({ctx.enclosing_function}):\n{ctx.function_body}"
+            )
         if ctx.callers:
             caller_strs = [f"{c.file}:{c.line} {c.function}()" for c in ctx.callers[:5]]
             lines.append(f"Called by: {', '.join(caller_strs)}")
@@ -266,7 +283,7 @@ def build_grouped_prompt(
         if dep_count <= 80:
             ctx_lines.append(f"Installed: {', '.join(profile.all_deps)}")
         else:
-            shown = ', '.join(profile.all_deps[:80])
+            shown = ", ".join(profile.all_deps[:80])
             ctx_lines.append(f"Installed (first 80 of {dep_count}): {shown}")
         if profile.security_deps:
             ctx_lines.append(f"Security deps: {', '.join(profile.security_deps)}")
@@ -365,13 +382,17 @@ def build_grouped_prompt(
                     sampled = [path[int(i * step)] for i in range(10)]
                 lines.append(f"TAINT PATH ({len(path)} steps): {' → '.join(sampled)}")
             elif ctx.taint_reachable:
-                lines.append("SOURCE: Reachable by untrusted input (path not available)")
+                lines.append(
+                    "SOURCE: Reachable by untrusted input (path not available)"
+                )
             else:
                 lines.append("SOURCE: NOT reachable by untrusted input")
 
             # SANITIZATION
             if ctx.taint_sanitized:
-                lines.append(f"SANITIZATION: SANITIZED via {', '.join(ctx.taint_sanitizers)}")
+                lines.append(
+                    f"SANITIZATION: SANITIZED via {', '.join(ctx.taint_sanitizers)}"
+                )
             elif ctx.taint_reachable:
                 lines.append("SANITIZATION: NONE found between source and sink")
 
@@ -390,7 +411,9 @@ def build_grouped_prompt(
             # Security-relevant callees only (cap at 10)
             if ctx.callees:
                 shown = ctx.callees[:10]
-                suffix = f" +{len(ctx.callees) - 10} more" if len(ctx.callees) > 10 else ""
+                suffix = (
+                    f" +{len(ctx.callees) - 10} more" if len(ctx.callees) > 10 else ""
+                )
                 lines.append(f"Calls: {', '.join(shown)}{suffix}")
 
         else:
@@ -401,6 +424,7 @@ def build_grouped_prompt(
             # Use dataflow-sliced context when taint flow is available
             if ctx.taint_flow:
                 import os
+
                 slice_path = f"{file_path}" if os.path.isabs(file_path) else file_path
                 sliced = _slice_code_by_flow(slice_path, ctx.taint_flow)
                 if sliced:
@@ -410,7 +434,9 @@ def build_grouped_prompt(
                     lines.append(f"{label}:\n{sliced}")
             elif ctx.enclosing_function and ctx.function_body:
                 # Full function body only when no taint flow available
-                lines.append(f"ENCLOSING FUNCTION ({ctx.enclosing_function}):\n{ctx.function_body}")
+                lines.append(
+                    f"ENCLOSING FUNCTION ({ctx.enclosing_function}):\n{ctx.function_body}"
+                )
 
             # Callers as list only (no inlined bodies)
             if ctx.callers:
@@ -422,13 +448,17 @@ def build_grouped_prompt(
 
             if ctx.callees:
                 shown = ctx.callees[:10]
-                suffix = f" +{len(ctx.callees) - 10} more" if len(ctx.callees) > 10 else ""
+                suffix = (
+                    f" +{len(ctx.callees) - 10} more" if len(ctx.callees) > 10 else ""
+                )
                 lines.append(f"Calls: {', '.join(shown)}{suffix}")
 
         finding_context_parts.append("\n".join(lines))
 
     if finding_context_parts:
-        parts.append("EVIDENCE PER FINDING:\n" + "\n\n".join(finding_context_parts) + "\n")
+        parts.append(
+            "EVIDENCE PER FINDING:\n" + "\n\n".join(finding_context_parts) + "\n"
+        )
 
     # File imports — helps LLM identify security-relevant libraries in scope
     all_imports = set()
@@ -444,14 +474,18 @@ def build_grouped_prompt(
         if not matched_memories:
             continue
         lines = [f"  - [{m.scope}] {m.id}: {m.guidance}" for m in matched_memories]
-        memory_parts.append(f"Finding {idx + 1} ({finding['rule']}):\n" + "\n".join(lines))
+        memory_parts.append(
+            f"Finding {idx + 1} ({finding['rule']}):\n" + "\n".join(lines)
+        )
     if memory_parts:
         parts.append("REVIEWER MEMORIES:\n" + "\n".join(memory_parts) + "\n")
 
     # Findings list (include rule confidence if available)
     finding_lines = []
     for f in findings:
-        line = f"{f['index'] + 1}. [Rule: {f['rule']}] Line {f['line']} — {f['message']}"
+        line = (
+            f"{f['index'] + 1}. [Rule: {f['rule']}] Line {f['line']} — {f['message']}"
+        )
         if f.get("severity"):
             line += f" (severity: {f['severity']})"
         if f.get("rule_confidence"):
@@ -461,9 +495,7 @@ def build_grouped_prompt(
         f"FINDINGS TO TRIAGE ({len(findings)} findings):\n" + "\n".join(finding_lines)
     )
 
-    parts.append(
-        "Analyze each finding and provide your verdict with reasoning."
-    )
+    parts.append("Analyze each finding and provide your verdict with reasoning.")
 
     prompt = "\n".join(parts)
 
@@ -481,7 +513,14 @@ def _file_type_hint(file_path: str) -> str:
         return "GitHub Actions workflow (YAML). Runs in CI, not in app runtime. ${{ }} expressions are evaluated by GitHub."
     if "/scripts/" in p or p.endswith(".sh") or p.endswith(".bash"):
         return "Build/CLI script. Runs locally or in CI, not as part of the deployed application. No user-facing input."
-    if "/tests/" in p or "/test/" in p or "/__tests__/" in p or p.endswith("_test.py") or p.endswith(".test.ts") or p.endswith(".spec.ts"):
+    if (
+        "/tests/" in p
+        or "/test/" in p
+        or "/__tests__/" in p
+        or p.endswith("_test.py")
+        or p.endswith(".test.ts")
+        or p.endswith(".spec.ts")
+    ):
         return "Test file. Not deployed to production."
     if "/migrations/" in p or "migration" in p.rsplit("/", 1)[-1]:
         return "Database migration. Runs once during deployment, not at request time."
