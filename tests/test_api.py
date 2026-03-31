@@ -10,7 +10,7 @@ from src.models.analysis import AnalysisResult, CallerInfo, FileGroupResult, Fin
 
 @pytest.fixture
 def app():
-    return create_app(api_key="test-key")
+    return create_app()
 
 
 @pytest.fixture
@@ -25,12 +25,6 @@ async def test_health(client):
     resp = await client.get("/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "healthy"
-
-
-@pytest.mark.asyncio
-async def test_analyze_requires_auth(client):
-    resp = await client.post("/analyze", json={})
-    assert resp.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -50,7 +44,6 @@ async def test_analyze_with_auth(client):
                 "repo_url": "https://github.com/u/r",
                 "semgrep_json": {"version": "1", "results": [], "errors": [], "paths": {}},
             },
-            headers={"X-API-Key": "test-key"},
         )
     assert resp.status_code == 200
     assert "annotated_json" in resp.json()
@@ -123,7 +116,6 @@ async def test_analyze_includes_graph_context_in_annotated_json(client):
                     "paths": {"scanned": ["app.py"], "skipped": []},
                 },
             },
-            headers={"X-API-Key": "test-key"},
         )
 
     assert resp.status_code == 200
@@ -181,7 +173,6 @@ async def test_analyze_stream_sends_keepalive_during_idle_wait(client):
                 "repo_url": "https://github.com/u/r",
                 "semgrep_json": {"version": "1", "results": [], "errors": [], "paths": {}},
             },
-            headers={"X-API-Key": "test-key"},
         )
 
     assert resp.status_code == 200

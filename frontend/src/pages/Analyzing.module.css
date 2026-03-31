@@ -1,0 +1,105 @@
+.page {
+  min-height: 100dvh;
+  background: var(--bg);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 16px 60px;
+}
+
+.card {
+  width: 100%;
+  max-width: 600px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+/* Progress bar */
+.progressTrack {
+  height: 4px;
+  background: var(--surface);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progressBar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.progressBarError {
+  background: var(--danger);
+  width: 100% !important;
+}
+
+.currentStep {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+/* Error box */
+.errorBox {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.errorText {
+  font-size: 13px;
+  color: var(--danger);
+  margin: 0;
+  word-break: break-word;
+}
+
+.retryBtn {
+  align-self: flex-start;
+  height: 44px;
+  padding: 0 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text);
+  outline: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .retryBtn:hover {
+    border-color: var(--accent);
+  }
+}
+
+.retryBtn:focus-visible {
+  border-color: var(--accent);
+}
+
+.traceWrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+@media (max-width: 480px) {
+  .page {
+    padding: 16px 12px 40px;
+  }
+
+  .card {
+    padding: 16px;
+  }
+}

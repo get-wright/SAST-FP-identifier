@@ -8,7 +8,6 @@ from src.api.app import create_app
 def main():
     settings = Settings()
     app = create_app(
-        api_key=settings.API_KEY,
         repos_cache_dir=settings.REPOS_CACHE_DIR,
         cache_dir=settings.RESULT_CACHE_DIR,
         triage_data_dir=settings.TRIAGE_DATA_DIR,

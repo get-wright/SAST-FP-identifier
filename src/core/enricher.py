@@ -12,25 +12,53 @@ from src.graph.joern_client import CallGraphResult, JoernClient, TaintResult
 from src.graph.mcp_client import GkgMCPClient
 from src.models.analysis import CrossFileHop, FindingContext, CallerInfo
 from src.models.semgrep import SemgrepFinding
-from src.taint.flow_tracker import trace_taint_flow
+from src.taint.engine import trace_taint_flow
+from src.taint import load_rules
 from src.taint.cross_file import resolve_cross_file
 
 logger = logging.getLogger(__name__)
 
 # File extensions Joern's CPG frontends can parse
-_JOERN_SUPPORTED_EXTS: frozenset[str] = frozenset({
-    ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
-    ".py",
-    ".java",
-    ".c", ".h", ".cpp", ".cc", ".hpp", ".hh", ".cxx",
-    ".go",
-    ".php",
-    ".rb",
-    ".kt", ".kts",
-    ".cs",
-    ".swift",
-    ".scala",
-})
+_JOERN_SUPPORTED_EXTS: frozenset[str] = frozenset(
+    {
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".mjs",
+        ".cjs",
+        ".py",
+        ".java",
+        ".c",
+        ".h",
+        ".cpp",
+        ".cc",
+        ".hpp",
+        ".hh",
+        ".cxx",
+        ".go",
+        ".php",
+        ".rb",
+        ".kt",
+        ".kts",
+        ".cs",
+        ".swift",
+        ".scala",
+    }
+)
+
+
+class _TreeSitterAdapter:
+    """Adapts TreeSitterReader to the taint engine's Parser protocol."""
+
+    def __init__(self, reader):
+        self._reader = reader
+
+    def parse_file(self, path: str):
+        return self._reader.parse_file(path)
+
+    def get_grammar(self, extension: str):
+        return self._reader.get_config(extension)
 
 
 class Enricher:
@@ -51,6 +79,10 @@ class Enricher:
         self._joern_available = joern_available
         self._joern_translate = joern_path_translator
         self._ts = TreeSitterReader()
+        self._parser = _TreeSitterAdapter(self._ts)
+        self._rules = load_rules(
+            str(Path(__file__).resolve().parent.parent / "taint" / "rules")
+        )
         self._context_lines = context_lines
 
     async def enrich(self, finding: SemgrepFinding) -> FindingContext:
@@ -73,37 +105,56 @@ class Enricher:
                 sink_line=line,
                 check_id=finding.check_id,
                 cwe_list=finding.metadata.get("cwe", []),
+                rules=self._rules,
+                parser=self._parser,
             )
             ctx.taint_flow = taint_flow
 
             # Cross-file resolution for unresolved callees (when gkg available)
-            if taint_flow and taint_flow.unresolved_calls and self._gkg_available and self._gkg:
+            if (
+                taint_flow
+                and taint_flow.unresolved_calls
+                and self._gkg_available
+                and self._gkg
+            ):
                 import time as _time
+
                 hops = []
                 _cross_file_start = _time.monotonic()
                 _CROSS_FILE_BUDGET = 15.0
                 for callee in taint_flow.unresolved_calls[:3]:
                     if _time.monotonic() - _cross_file_start > _CROSS_FILE_BUDGET:
-                        logger.info("Cross-file resolution budget exhausted (%.0fs)", _CROSS_FILE_BUDGET)
+                        logger.info(
+                            "Cross-file resolution budget exhausted (%.0fs)",
+                            _CROSS_FILE_BUDGET,
+                        )
                         break
                     try:
                         result = await resolve_cross_file(
                             callee_name=callee,
                             gkg_client=self._gkg,
                             repo_path=self._repo_path,
+                            rules=self._rules,
+                            parser=self._parser,
                         )
-                        hops.append(CrossFileHop(
-                            callee=callee,
-                            file=result.file,
-                            line=result.line,
-                            action=result.action,
-                            sub_flow=result.sub_flow,
-                        ))
+                        hops.append(
+                            CrossFileHop(
+                                callee=callee,
+                                file=result.file,
+                                line=result.line,
+                                action=result.action,
+                                sub_flow=result.sub_flow,
+                            )
+                        )
                     except Exception as e:
-                        logger.warning("Cross-file resolution failed for %s: %s", callee, e)
+                        logger.warning(
+                            "Cross-file resolution failed for %s: %s", callee, e
+                        )
                 taint_flow.cross_file_hops = hops
         except Exception as e:
-            logger.warning("Taint flow tracing failed for %s:%d: %s", finding.path, line, e)
+            logger.warning(
+                "Taint flow tracing failed for %s:%d: %s", finding.path, line, e
+            )
 
         # Joern taint analysis (adds taint fields to existing context)
         ext = Path(file_path).suffix.lower()
@@ -133,7 +184,9 @@ class Enricher:
                 refs = await self._gkg.get_references(file_path, line, fn_name)
                 callers = _parse_callers(refs)
             except Exception as e:
-                logger.warning("gkg get_references failed for %s:%d: %s", finding.path, line, e)
+                logger.warning(
+                    "gkg get_references failed for %s:%d: %s", finding.path, line, e
+                )
 
         callees = self._ts.find_callees(file_path, fn_name) if fn_name else []
         imports = self._ts.find_imports(file_path)
@@ -172,13 +225,14 @@ class Enricher:
             source="tree_sitter",
         )
 
-
     async def _enrich_with_joern(
         self, ctx: FindingContext, file_path: str, finding: SemgrepFinding
     ) -> None:
         """Add Joern taint analysis to an existing FindingContext."""
         try:
-            joern_file = self._joern_translate(file_path) if self._joern_translate else file_path
+            joern_file = (
+                self._joern_translate(file_path) if self._joern_translate else file_path
+            )
             lang = file_path.rsplit(".", 1)[-1] if "." in file_path else "unknown"
 
             result = await self._joern.taint_check(joern_file, finding.start_line, lang)
@@ -196,7 +250,8 @@ class Enricher:
                 if cg.callers:
                     ctx.callers = [
                         CallerInfo(
-                            file=c["file"], line=c["line"],
+                            file=c["file"],
+                            line=c["line"],
                             function=c["name"],
                             context=self._get_caller_body(c["file"], c["name"]),
                         )
@@ -209,7 +264,12 @@ class Enricher:
             ctx.source = "joern"
 
         except Exception as e:
-            logger.warning("Joern enrichment failed for %s:%d: %s", finding.path, finding.start_line, e)
+            logger.warning(
+                "Joern enrichment failed for %s:%d: %s",
+                finding.path,
+                finding.start_line,
+                e,
+            )
 
     def _get_caller_body(self, caller_file: str, function_name: str) -> str:
         """Try to extract a caller's function body via tree-sitter for prompt context.
@@ -259,26 +319,32 @@ def _parse_callers(refs: list) -> list[CallerInfo]:
                 for definition in definitions:
                     for reference in definition.get("references", []):
                         start = reference.get("range", {}).get("start", {})
-                        callers.append(CallerInfo(
-                            file=reference.get("file", reference.get("file_path", "")),
-                            line=reference.get("line", start.get("line", 0)),
-                            function=reference.get(
-                                "function",
-                                reference.get(
-                                    "enclosing_definition_name",
-                                    definition.get("name", ""),
+                        callers.append(
+                            CallerInfo(
+                                file=reference.get(
+                                    "file", reference.get("file_path", "")
                                 ),
-                            ),
-                            context=reference.get("context", ""),
-                        ))
+                                line=reference.get("line", start.get("line", 0)),
+                                function=reference.get(
+                                    "function",
+                                    reference.get(
+                                        "enclosing_definition_name",
+                                        definition.get("name", ""),
+                                    ),
+                                ),
+                                context=reference.get("context", ""),
+                            )
+                        )
                 continue
 
-            callers.append(CallerInfo(
-                file=r.get("file", r.get("file_path", "")),
-                line=r.get("line", 0),
-                function=r.get("function", r.get("definition_name", "")),
-                context=r.get("context", ""),
-            ))
+            callers.append(
+                CallerInfo(
+                    file=r.get("file", r.get("file_path", "")),
+                    line=r.get("line", 0),
+                    function=r.get("function", r.get("definition_name", "")),
+                    context=r.get("context", ""),
+                )
+            )
         elif isinstance(r, str):
             # Parse gkg XML ToolResponse format:
             # <definition><name>fn</name><location>file:L10-20</location>
@@ -286,7 +352,8 @@ def _parse_callers(refs: list) -> list[CallerInfo]:
             # </definition>
             for def_match in re.finditer(
                 r"<definition>(.*?)</definition>",
-                r, re.DOTALL,
+                r,
+                re.DOTALL,
             ):
                 def_block = def_match.group(1)
                 name_m = re.search(r"<name>(.*?)</name>", def_block)
@@ -313,10 +380,12 @@ def _parse_callers(refs: list) -> list[CallerInfo]:
                 context = ctx_m.group(1).strip() if ctx_m else ""
 
                 if def_file:
-                    callers.append(CallerInfo(
-                        file=def_file,
-                        line=def_line,
-                        function=fn_name,
-                        context=context,
-                    ))
+                    callers.append(
+                        CallerInfo(
+                            file=def_file,
+                            line=def_line,
+                            function=fn_name,
+                            context=context,
+                        )
+                    )
     return callers

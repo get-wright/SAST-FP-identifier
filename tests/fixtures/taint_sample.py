@@ -30,3 +30,19 @@ def multi_step_flow(request):
 def calls_unknown(user_input):
     processed = external_lib.process(user_input)
     cursor.execute(processed)
+
+def multiline_call(request):
+    url = request.args.get("url")
+    owner = url.split("/")[0]
+    repo = url.split("/")[1]
+    result = requests.get(
+        f"https://api.example.com/repos/{owner}/{repo}",
+        timeout=5,
+        headers={"Accept": "application/json"},
+    )
+
+
+def response_data_sink(request):
+    user_input = request.args.get("data")
+    response = make_response()
+    response.data = user_input

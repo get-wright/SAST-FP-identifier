@@ -25,6 +25,7 @@ from src.llm.prompt_builder import (
 )
 from src.llm.provider import create_chat_model
 from src.llm.schemas import DataflowBatch, VerdictOnlyBatch, VerdictOutputBatch
+from src.llm.structured_output import invoke_structured
 from langchain_core.language_models import BaseChatModel
 from src.models.analysis import AnalysisResult, CallerInfo, FileGroupResult, FindingContext, FindingVerdict, TaintFlow
 from src.models.semgrep import SemgrepFinding, parse_semgrep_json
@@ -658,10 +659,19 @@ class Orchestrator:
         findings_text, finding_memories = self._prepare_batch(findings, repo_url, profile)
 
         if self._prompt_strategy == "two_stage":
-            return await self._analyze_batch_two_stage(
-                findings, findings_text, contexts, llm, profile, repo_map, repo_url,
-                finding_memories, index_offset,
+            # Skip Stage 1 (dataflow) if no finding has meaningful enrichment context.
+            # Saves an entire LLM call for config findings (Dockerfile, HTML templates, etc.)
+            has_enrichment = any(
+                ctx.enclosing_function or ctx.callers or ctx.callees or ctx.taint_flow
+                for ctx in contexts.values()
             )
+            if not has_enrichment:
+                logger.info("Skipping Stage 1 — no enrichment context for %s", findings[0].path)
+            else:
+                return await self._analyze_batch_two_stage(
+                    findings, findings_text, contexts, llm, profile, repo_map, repo_url,
+                    finding_memories, index_offset,
+                )
 
         # Single-pass path
         prompt = build_grouped_prompt(
@@ -681,14 +691,13 @@ class Orchestrator:
         prompt: str,
     ) -> list[dict[str, Any]]:
         """Execute single-pass LLM call and return parsed verdict dicts."""
-        structured = llm.with_structured_output(VerdictOutputBatch)
         messages = [("system", SYSTEM_PROMPT_SINGLE_PASS), ("human", prompt)]
 
         async with self._semaphore:
             batch_result = None
             for attempt in range(1 + self._retry_count):
                 try:
-                    batch_result = await structured.ainvoke(messages)
+                    batch_result = await invoke_structured(llm, VerdictOutputBatch, messages)
                     break
                 except Exception as e:
                     if attempt < self._retry_count:
@@ -717,12 +726,11 @@ class Orchestrator:
 
         # Stage 1: dataflow analysis
         df_prompt = build_dataflow_prompt(file_path, findings_text, contexts)
-        df_structured = llm.with_structured_output(DataflowBatch)
         messages1 = [("system", SYSTEM_PROMPT_DATAFLOW), ("human", df_prompt)]
 
         try:
             async with self._semaphore:
-                df_result = await df_structured.ainvoke(messages1)
+                df_result = await invoke_structured(llm, DataflowBatch, messages1)
         except Exception as e:
             logger.warning("Stage 1 (dataflow) failed, falling back to single-pass: %s", e)
             prompt = build_grouped_prompt(
@@ -739,14 +747,13 @@ class Orchestrator:
             memories=finding_memories, repo_map=repo_map, profile=profile,
             dataflow_summaries=summaries,
         )
-        v_structured = llm.with_structured_output(VerdictOnlyBatch)
         messages2 = [("system", SYSTEM_PROMPT_VERDICT), ("human", stage2_prompt)]
 
         async with self._semaphore:
             v_result = None
             for attempt in range(1 + self._retry_count):
                 try:
-                    v_result = await v_structured.ainvoke(messages2)
+                    v_result = await invoke_structured(llm, VerdictOnlyBatch, messages2)
                     break
                 except Exception as e:
                     if attempt < self._retry_count:
@@ -763,6 +770,7 @@ class Orchestrator:
                 d = v.model_dump()
                 df_match = summaries.get(v.finding_index, {})
                 d["dataflow_analysis"] = df_match.get("dataflow_analysis", "")
+                d["flow_steps"] = df_match.get("flow_steps", [])
                 parsed.append(d)
 
         return self._map_verdicts(parsed, findings, finding_memories, index_offset)
@@ -789,13 +797,15 @@ class Orchestrator:
                         verdict = "false_positive" if matched["is_false_positive"] else "true_positive"
                     else:
                         verdict = "uncertain"
+                raw_conf = matched.get("confidence", 0.0)
                 verdicts.append(FindingVerdict(
                     finding_index=global_index,
                     fingerprint=finding.fingerprint,
                     verdict=verdict,
-                    confidence=matched.get("confidence", 0.0),
+                    confidence=max(0.0, min(1.0, raw_conf)),
                     reasoning=matched.get("reasoning", ""),
                     dataflow_analysis=matched.get("dataflow_analysis", ""),
+                    flow_steps=matched.get("flow_steps", []),
                     remediation_code=matched.get("remediation_code"),
                     remediation_explanation=matched.get("remediation_explanation"),
                     applied_memory_ids=[m.id for m in finding_memories.get(i, [])],

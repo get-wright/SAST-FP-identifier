@@ -1,0 +1,91 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.heading {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sub {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.input {
+  height: 44px;
+  padding: 0 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  width: 100%;
+}
+
+.input:focus-visible {
+  border-color: var(--accent);
+}
+
+.inputError {
+  border-color: var(--danger);
+}
+
+.fieldError {
+  font-size: 11px;
+  color: var(--danger);
+}
+
+.fieldHint {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.privateToggleRow {
+  display: flex;
+  align-items: center;
+}
+
+.toggleBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  min-height: 32px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .toggleBtn:hover {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+}
+
+.toggleActive {
+  border-color: var(--accent);
+  color: var(--accent);
+}

@@ -6,16 +6,13 @@ import logging
 import os
 
 from fastapi import FastAPI
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.staticfiles import StaticFiles
 
-from src.api.middleware import APIKeyMiddleware
 from src.api.routes import router, set_orchestrator
 from src.core.orchestrator import Orchestrator
 
 
 def create_app(
-    api_key: str = "changeme",
     **orchestrator_kwargs,
 ) -> FastAPI:
     logging.basicConfig(
@@ -30,9 +27,6 @@ def create_app(
         docs_url="/docs",
     )
 
-    # Auth middleware
-    app.add_middleware(BaseHTTPMiddleware, dispatch=APIKeyMiddleware(api_key))
-
     # Routes
     app.include_router(router)
 
@@ -42,7 +36,7 @@ def create_app(
         set_orchestrator(orch)
 
     # Static frontend (must come after router so API routes take priority)
-    frontend_dir = os.path.join(os.path.dirname(__file__), "../../frontend")
+    frontend_dir = os.path.join(os.path.dirname(__file__), "../../frontend/dist")
     if os.path.isdir(frontend_dir):
         app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
 

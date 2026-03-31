@@ -1,0 +1,222 @@
+.empty {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Top bar: source badge + enclosing function */
+.topBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sourceBadge {
+  font-size: 11px;
+  font-family: monospace;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 7px;
+  color: var(--text-secondary);
+}
+
+.enclosing {
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--text);
+}
+
+/* Section */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sectionTitle {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-secondary);
+  margin: 0;
+  font-weight: 600;
+}
+
+/* Callers table */
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.thNum {
+  text-align: right;
+  width: 48px;
+}
+
+.row {
+  border-bottom: 1px solid var(--border);
+}
+
+.row:nth-child(even) {
+  background: var(--surface);
+}
+
+.rowClickable {
+  cursor: pointer;
+}
+
+.rowClickable:hover {
+  background: var(--surface);
+}
+
+.td {
+  padding: 4px 8px;
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+
+.tdNum {
+  text-align: right;
+  color: var(--text-secondary);
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.mono {
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.contextCell {
+  padding: 0;
+  background: var(--panel);
+}
+
+.contextPre {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--text);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.overflow {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin: 4px 0 0;
+}
+
+/* Pills */
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--text);
+}
+
+.overflowPill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-style: italic;
+  padding: 2px 4px;
+}
+
+/* Taint */
+.taintReach {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.reachDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dotGreen {
+  background: var(--success);
+}
+
+.dotRed {
+  background: var(--danger);
+}
+
+.dotBlue {
+  background: #3b82f6;
+}
+
+.reachLabel {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.taintBlock {
+  margin-top: 8px;
+}
+
+.taintBlockLabel {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin: 0 0 4px;
+}
+
+.taintList {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.taintItem {
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--text);
+  padding: 2px 0;
+  word-break: break-all;
+}
