@@ -39,17 +39,12 @@ class LanguageConfig:
     has_arrow_functions: bool = False  # needs parent variable_declarator lookup
     lazy_module: str = ""  # module to import lazily (empty = already imported)
     lazy_func: str = "language"  # function name on the module
-    # Taint-specific fields (empty = language does not support flow tracking)
+    # AST grammar structure fields (used by taint engine for flow tracking)
     assignment_types: tuple[str, ...] = ()
     parameter_types: tuple[str, ...] = ()
     return_types: tuple[str, ...] = ()
     conditional_types: tuple[str, ...] = ()
-    dangerous_sources: tuple[str, ...] = ()
-    # Member-access assignment sink detection
-    member_access_types: tuple[
-        str, ...
-    ] = ()  # AST node types for property access on LHS
-    dangerous_sinks: tuple[str, ...] = ()  # Property names that are security sinks
+    member_access_types: tuple[str, ...] = ()  # property access on LHS
 
 
 # Core languages (always imported)
@@ -69,19 +64,7 @@ _LANG_REGISTRY: dict[str, tuple[object, LanguageConfig]] = {
                 "elif_clause",
                 "else_clause",
             ),
-            dangerous_sources=(
-                "request.args",
-                "request.form",
-                "request.json",
-                "request.data",
-                "os.environ",
-                "sys.argv",
-                "input()",
-                "request.GET",
-                "request.POST",
-            ),
             member_access_types=("attribute",),
-            dangerous_sinks=(),  # Flask/Django sinks are method calls, not property assignments,
         ),
     ),
 }
@@ -105,46 +88,7 @@ _JS_TAINT_FIELDS = dict(
         "switch_statement",
         "ternary_expression",
     ),
-    dangerous_sources=(
-        "req.body",
-        "req.query",
-        "req.params",
-        "req.headers",
-        "document.location",
-        "window.location",
-        "process.env",
-    ),
     member_access_types=("member_expression",),
-    dangerous_sinks=(
-        # HTML injection (CWE-79) — OWASP DOM XSS Rules #1-2
-        "innerHTML",
-        "outerHTML",
-        "srcdoc",
-        # URL/navigation (CWE-79 via javascript: URI, CWE-601 redirect)
-        "src",
-        "href",
-        "action",
-        "formAction",
-        # Event handler code execution (CWE-79) — OWASP Rule #3
-        "onclick",
-        "onerror",
-        "onload",
-        "onmouseover",
-        "onfocus",
-        "onblur",
-        "onsubmit",
-        "onchange",
-        "onkeydown",
-        "onkeyup",
-        "onkeypress",
-        # CSS injection (CWE-79) — OWASP Rule #4
-        "cssText",
-        # Object/embed (CWE-79)
-        "data",
-        "codebase",
-        # Navigation (CWE-601)
-        "location",
-    ),
 )
 
 _LANG_REGISTRY.update(
@@ -163,15 +107,7 @@ _LANG_REGISTRY.update(
                 parameter_types=("parameter_list",),
                 return_types=("return_statement",),
                 conditional_types=("if_statement", "switch_statement"),
-                dangerous_sources=(
-                    "r.URL.Query",
-                    "r.FormValue",
-                    "r.Body",
-                    "os.Getenv",
-                    "os.Args",
-                ),
                 member_access_types=("selector_expression",),
-                dangerous_sinks=(),
             ),
         ),
         ".java": (
@@ -192,15 +128,7 @@ _LANG_REGISTRY.update(
                     "try_statement",
                     "switch_expression",
                 ),
-                dangerous_sources=(
-                    "request.getParameter",
-                    "request.getAttribute",
-                    "request.getHeader",
-                    "System.getenv",
-                    "System.getProperty",
-                ),
                 member_access_types=("field_access",),
-                dangerous_sinks=(),
             ),
         ),
         ".php": (

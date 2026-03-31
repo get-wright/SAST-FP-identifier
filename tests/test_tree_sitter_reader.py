@@ -233,40 +233,30 @@ def test_tree_sitter_reader_public_accessors():
     assert config.assignment_types
 
 
-# --- Member access & dangerous sinks tests ---
+# --- Member access types tests ---
 
 
-def test_python_config_has_member_access_and_sinks(reader):
+def test_python_config_has_member_access_types(reader):
     config = reader.get_config(".py")
     assert "attribute" in config.member_access_types
-    assert (
-        len(config.dangerous_sinks) == 0
-    )  # Python sinks are method calls, not property assignments
 
 
-def test_js_config_has_member_access_and_sinks(reader):
+def test_js_config_has_member_access_types(reader):
     config = reader.get_config(".js")
     assert "member_expression" in config.member_access_types
-    assert "innerHTML" in config.dangerous_sinks
-    assert "outerHTML" in config.dangerous_sinks
-    assert "href" in config.dangerous_sinks
-    assert "src" in config.dangerous_sinks
 
 
-def test_go_config_has_member_access_no_sinks(reader):
+def test_go_config_has_member_access_types(reader):
     config = reader.get_config(".go")
     assert "selector_expression" in config.member_access_types
-    assert len(config.dangerous_sinks) == 0
 
 
-def test_java_config_has_member_access_no_sinks(reader):
+def test_java_config_has_member_access_types(reader):
     config = reader.get_config(".java")
     assert "field_access" in config.member_access_types
-    assert len(config.dangerous_sinks) == 0
 
 
-def test_unsupported_language_has_empty_sink_fields(reader):
+def test_unsupported_language_has_empty_member_access(reader):
     config = reader.get_config(".php")
     if config is not None:
         assert len(config.member_access_types) == 0
-        assert len(config.dangerous_sinks) == 0
