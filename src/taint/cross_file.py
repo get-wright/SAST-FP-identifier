@@ -7,8 +7,9 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from src.models.analysis import TaintFlow
-from src.taint.flow_tracker import trace_taint_flow
+from src.taint.models import TaintFlow
+from src.taint.engine import trace_taint_flow
+from src.taint.rules import TaintRuleSet
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ _TIMEOUT_TOTAL = 15.0
 @dataclass
 class CrossFileResult:
     """Result of cross-file callee resolution."""
+
     action: str  # "propagates" | "sanitizes" | "transforms" | "unknown"
     file: str = ""
     line: int = 0
@@ -28,6 +30,7 @@ class CrossFileResult:
 @dataclass
 class _ResolutionCounter:
     """Mutable counter for tracking total gkg lookups."""
+
     value: int = 0
     max_total: int = 8
 
@@ -36,6 +39,8 @@ async def resolve_cross_file(
     callee_name: str,
     gkg_client,
     repo_path: str,
+    rules: TaintRuleSet | None = None,
+    parser: object | None = None,
     depth: int = 0,
     max_depth: int = 3,
     visited: Optional[set[str]] = None,
@@ -76,15 +81,22 @@ async def resolve_cross_file(
         # Use last line of function as sink_line (approximate — traces return statements)
         # The definition line is the function start; we need the end to find returns.
         end_line = defn.get("end_line", defn.get("line_end", 0))
-        effective_sink = end_line if end_line > line else line + 20  # estimate if no end_line
+        effective_sink = (
+            end_line if end_line > line else line + 20
+        )  # estimate if no end_line
 
-        sub_flow = trace_taint_flow(
-            file_path=file_path,
-            function_name=callee_name,
-            sink_line=effective_sink,
-            check_id="",
-            cwe_list=[],
-        )
+        if rules is None or parser is None:
+            sub_flow = None
+        else:
+            sub_flow = trace_taint_flow(
+                file_path=file_path,
+                function_name=callee_name,
+                sink_line=effective_sink,
+                check_id="",
+                cwe_list=[],
+                rules=rules,
+                parser=parser,
+            )
 
         action = "unknown"
         if sub_flow:
@@ -95,7 +107,9 @@ async def resolve_cross_file(
             else:
                 action = "transforms"
 
-        return CrossFileResult(action=action, file=file_path, line=line, sub_flow=sub_flow)
+        return CrossFileResult(
+            action=action, file=file_path, line=line, sub_flow=sub_flow
+        )
 
     except asyncio.TimeoutError:
         logger.warning("Cross-file resolution timed out for %s", callee_name)
